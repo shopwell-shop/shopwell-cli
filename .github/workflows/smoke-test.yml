@@ -46,7 +46,7 @@ jobs:
           path: 'plugin'
 
       - name: Create Shopwell
-        run: shopwell-cli project create shopwell 6.5.7.3 --no-audit
+        run: shopwell-cli project create shopwell 6.7.15.0 --no-audit
 
       - name: Build asset of Plugin
         run: shopwell-cli extension package plugin

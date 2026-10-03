@@ -76,6 +76,9 @@ jobs:
               fi
             done
 
+            find "$plugin_dir/src" -type f -name '*.php' -exec \
+              perl -pi -e 's/^use [^\\]+\\Core\\Framework\\Plugin;/use Shopwell\\Core\\Framework\\Plugin;/' {} +
+
             git -C "$plugin_dir" add -A
             git -C "$plugin_dir" \
               -c user.name='Shopwell CI' \

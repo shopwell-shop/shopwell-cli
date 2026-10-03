@@ -1,0 +1,245 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+)
+
+// RunSpinnerWithLogs executes the given command while displaying a spinner and allowing the user to toggle logs with Ctrl+L.
+func RunSpinnerWithLogs(ctx context.Context, title string, cmd *exec.Cmd) error {
+	return runSpinnerWithLogs(ctx, title, cmd, os.Stderr, func(ctx context.Context, model tea.Model) error {
+		p := tea.NewProgram(model, tea.WithContext(ctx))
+		_, err := p.Run()
+		return err
+	})
+}
+
+func runSpinnerWithLogs(ctx context.Context, title string, cmd *exec.Cmd, output io.Writer, runProgram func(context.Context, tea.Model) error) error {
+	cmdCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var writer logWriter
+	if cmd.Stdout != nil {
+		cmd.Stdout = io.MultiWriter(cmd.Stdout, &writer)
+	} else {
+		cmd.Stdout = &writer
+	}
+	if cmd.Stderr != nil {
+		cmd.Stderr = io.MultiWriter(cmd.Stderr, &writer)
+	} else {
+		cmd.Stderr = &writer
+	}
+
+	s := NewBrandSpinner()
+
+	model := &installProgressModel{
+		spinner:   s,
+		logWriter: &writer,
+		title:     title,
+		cmd:       cmd,
+		cancel:    cancel,
+	}
+
+	if err := runProgram(cmdCtx, model); err != nil {
+		return err
+	}
+
+	if model.cancelled {
+		return context.Canceled
+	}
+
+	if model.err != nil {
+		// A tea.Quit message can stop the program before its final frame has
+		// reached the terminal. Print failures outside the renderer so command
+		// output is always available to the user.
+		writeFailureOutput(output, title, model.err, model.logWriter.GetLastLines(12))
+	}
+
+	return model.err
+}
+
+func writeFailureOutput(w io.Writer, title string, err error, lines []string) {
+	_, _ = fmt.Fprintf(w, "\n✗ %s\n\n  Command failed: %v\n", title, err)
+	for _, line := range lines {
+		_, _ = fmt.Fprintf(w, "  %s\n", line)
+	}
+}
+
+type logWriter struct {
+	mu      sync.Mutex
+	lines   []string
+	current strings.Builder
+}
+
+func (w *logWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	for _, b := range p {
+		if b == '\n' {
+			w.lines = AppendTail(w.lines, 100, w.current.String())
+			w.current.Reset()
+		} else if b != '\r' {
+			w.current.WriteByte(b)
+		}
+	}
+	return len(p), nil
+}
+
+func (w *logWriter) GetLastLines(n int) []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	res := make([]string, 0, len(w.lines)+1)
+	res = append(res, w.lines...)
+
+	if w.current.Len() > 0 {
+		res = append(res, w.current.String())
+	}
+
+	return TailLines(res, n)
+}
+
+type installFinishedMsg struct {
+	err error
+}
+
+type installProgressModel struct {
+	spinner   spinner.Model
+	logWriter *logWriter
+	showLogs  bool
+	title     string
+	cmd       *exec.Cmd
+	cancel    context.CancelFunc
+
+	width     int
+	height    int
+	done      bool
+	cancelled bool
+	err       error
+}
+
+func (m *installProgressModel) Init() tea.Cmd {
+	return tea.Batch(m.spinner.Tick, func() tea.Msg {
+		err := m.cmd.Run()
+		return installFinishedMsg{err: err}
+	})
+}
+
+func (m *installProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			m.cancelled = true
+			m.cancel()
+			return m, tea.Quit
+		case "ctrl+l":
+			m.showLogs = !m.showLogs
+			return m, nil
+		}
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case installFinishedMsg:
+		m.done = true
+		m.err = msg.err
+		return m, tea.Quit
+	}
+
+	return m, nil
+}
+
+func (m *installProgressModel) View() tea.View {
+	var b strings.Builder
+
+	spinnerStr := m.spinner.View()
+	titleStyle := lipgloss.NewStyle().Bold(true)
+
+	if m.done {
+		if m.err != nil {
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4D4D")).Bold(true).Render("✗"))
+			b.WriteString(" ")
+			b.WriteString(titleStyle.Render(m.title))
+			b.WriteString("\n\n")
+
+			lines := m.logWriter.GetLastLines(12)
+			logStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4D4D")).PaddingLeft(2)
+			for _, line := range lines {
+				b.WriteString(logStyle.Render(line))
+				b.WriteString("\n")
+			}
+		} else {
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575")).Bold(true).Render("✔"))
+			b.WriteString(" ")
+			b.WriteString(titleStyle.Render(m.title))
+			b.WriteString("\n")
+		}
+		return tea.NewView(b.String())
+	}
+
+	var hint string
+	if m.showLogs {
+		hint = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render(" (Ctrl+L to hide live log)")
+	} else {
+		hint = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render(" (Ctrl+L to see live log)")
+	}
+
+	b.WriteString(spinnerStr)
+	b.WriteString(" ")
+	b.WriteString(titleStyle.Render(m.title))
+	b.WriteString(hint)
+	b.WriteString("\n")
+
+	if m.showLogs {
+		b.WriteString("\n")
+		lines := m.logWriter.GetLastLines(8)
+
+		var logBody strings.Builder
+		for i, line := range lines {
+			logBody.WriteString(line)
+			if i < len(lines)-1 {
+				logBody.WriteString("\n")
+			}
+		}
+		if len(lines) == 0 {
+			logBody.WriteString("Waiting for output...")
+		}
+
+		width := m.width - 4
+		if width < 40 {
+			width = 78
+		}
+		if width > 100 {
+			width = 100
+		}
+
+		borderStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#303030")).
+			Padding(0, 1).
+			Width(width)
+
+		b.WriteString(borderStyle.Render(logBody.String()))
+		b.WriteString("\n")
+	}
+
+	return tea.NewView(b.String())
+}

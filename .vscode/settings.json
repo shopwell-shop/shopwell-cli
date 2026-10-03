@@ -1,0 +1,31 @@
+{
+    "go.lintTool": "golangci-lint",
+    "go.lintFlags": [
+        "--path-mode=abs",
+        "--fast-only"
+    ],
+    "go.formatTool": "custom",
+    "go.alternateTools": {
+        "customFormatter": "golangci-lint"
+    },
+    "go.formatFlags": [
+        "fmt",
+        "--stdin"
+    ],
+    "go.useLanguageServer": true,
+    "go.diagnostic.vulncheck": "Imports",
+    "go.inlayHints.functionTypeParameters": true,
+    "go.inlayHints.assignVariableTypes": true,
+    "go.inlayHints.compositeLiteralFields": true,
+    "go.inlayHints.constantValues": true,
+    "files.exclude": {
+        ".devenv": true,
+        ".direnv": true,
+        ".idea": true,
+        ".delta": true,
+        ".pi": true,
+        ".crush": true
+    },
+    "go.toolsManagement.autoUpdate": false,
+    "go.toolsManagement.checkForUpdates": "off"
+}

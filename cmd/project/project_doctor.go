@@ -1,0 +1,85 @@
+package project
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/extension"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/tui"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+var projectDoctor = &cobra.Command{
+	Use:   "doctor [path]",
+	Short: "Inspect project config, Shopwell version, and extensions",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var err error
+		var projectDir string
+
+		if len(args) == 0 {
+			projectDir, err = os.Getwd()
+			if err != nil {
+				return err
+			}
+		} else {
+			projectDir, err = filepath.Abs(args[0])
+			if err != nil {
+				return err
+			}
+		}
+
+		fmt.Println(tui.SectionHeadingStyle.Render("Project"))
+		fmt.Println()
+
+		actualProjectConfigPath := shop.SearchConfigPath(cmd.Context(), projectDir, projectConfigPath)
+		shopCfg, err := shop.ReadConfig(cmd.Context(), actualProjectConfigPath, projectConfigPath == "")
+		if err != nil {
+			return err
+		}
+
+		if shopCfg.IsFallback() {
+			fmt.Printf("%s Project config: %s\n", tui.CheckWarn, tui.SecondaryText.Render("not found, using fallback"))
+		} else {
+			fmt.Printf("%s Project config: %s\n", tui.CheckOK, tui.GreenText.Render(actualProjectConfigPath))
+		}
+
+		shopwellConstraint, err := extension.GetShopwellProjectConstraint(projectDir)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%s Shopwell version: %s\n", tui.CheckOK, tui.GreenText.Render(shopwellConstraint.String()))
+
+		fmt.Println()
+		fmt.Println(tui.SectionHeadingStyle.Render("Detected Extensions & Bundles"))
+		fmt.Println()
+
+		sources := extension.FindAssetSourcesOfProject(logging.DisableLogger(cmd.Context()), projectDir, shopCfg)
+
+		if len(sources) == 0 {
+			fmt.Printf("%s No extensions or bundles detected\n", tui.CheckWarn)
+			return nil
+		}
+
+		rows := make([][]string, 0, len(sources))
+		for _, source := range sources {
+			relPath, err := filepath.Rel(projectDir, source.Path)
+			if err != nil {
+				relPath = source.Path
+			}
+			rows = append(rows, []string{source.Name, relPath})
+		}
+		tui.PrintTable([]string{"Name", "Path"}, rows)
+
+		return nil
+	},
+}
+
+func init() {
+	projectRootCmd.AddCommand(projectDoctor)
+}

@@ -1,0 +1,116 @@
+package project
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/executor"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/tui"
+)
+
+var projectLogsCmd = &cobra.Command{
+	Use:   "logs [filename]",
+	Short: "List, view, or follow Shopwell application logs from var/log/",
+	Long:  "Show the last lines of a Shopwell log file. Without arguments, the most recently modified log file is shown. Use --list to discover available log files.",
+	Args:  cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		projectRoot, err := shop.FindClosestShopwellProject(false)
+		if err != nil {
+			return err
+		}
+
+		cmdExecutor, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return err
+		}
+
+		return runProjectLogs(cmd, args, cmdExecutor)
+	},
+}
+
+func runProjectLogs(cmd *cobra.Command, args []string, cmdExecutor executor.Executor) error {
+	lines, _ := cmd.Flags().GetInt("lines")
+	if lines < 0 {
+		return fmt.Errorf("invalid value %d for --lines: must not be negative", lines)
+	}
+
+	files, err := cmdExecutor.AvailableLogFiles(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	list, _ := cmd.Flags().GetBool("list")
+	if list {
+		return printLogFileList(files)
+	}
+
+	if len(args) > 0 {
+		target := args[0]
+		if len(files) > 0 {
+			found := false
+			for _, f := range files {
+				if f.Name == target {
+					found = true
+					break
+				}
+			}
+			if !found {
+				names := make([]string, len(files))
+				for i, f := range files {
+					names[i] = f.Name
+				}
+
+				return fmt.Errorf("log file %q not found, available: %s", target, strings.Join(names, ", "))
+			}
+		}
+
+		follow, _ := cmd.Flags().GetBool("follow")
+		return cmdExecutor.GetLog(cmd.Context(), target, lines, follow, cmd.OutOrStdout())
+	}
+
+	if len(files) == 0 {
+		return errors.New("no log files found in var/log")
+	}
+
+	target := files[0].Name
+	follow, _ := cmd.Flags().GetBool("follow")
+
+	return cmdExecutor.GetLog(cmd.Context(), target, lines, follow, cmd.OutOrStdout())
+}
+
+func printLogFileList(files []executor.LogFile) error {
+	if len(files) == 0 {
+		fmt.Println(tui.DimText.Render("No log files found."))
+		return nil
+	}
+
+	rows := make([][]string, 0, len(files))
+	for _, f := range files {
+		rows = append(rows, []string{f.Name, formatSize(f.Size), f.ModTime.Format("2006-01-02 15:04:05")})
+	}
+	tui.PrintTable([]string{"File", "Size", "Modified"}, rows)
+
+	return nil
+}
+
+func formatSize(bytes int64) string {
+	switch {
+	case bytes >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/float64(1<<20))
+	case bytes >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+func init() {
+	projectRootCmd.AddCommand(projectLogsCmd)
+	projectLogsCmd.Flags().Int("lines", 100, "Number of log lines to show")
+	projectLogsCmd.Flags().BoolP("follow", "f", false, "Follow the selected log file for new output")
+	projectLogsCmd.Flags().BoolP("list", "l", false, "List available Shopwell log files")
+}

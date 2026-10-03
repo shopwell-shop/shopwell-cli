@@ -1,0 +1,96 @@
+package verifier
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+
+	"github.com/shyim/go-version"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/html"
+	"github.com/shopwell-shop/shopwell-cli/internal/validation"
+	"github.com/shopwell-shop/shopwell-cli/internal/verifier/twiglinter"
+	_ "github.com/shopwell-shop/shopwell-cli/internal/verifier/twiglinter/storefronttwiglinter"
+)
+
+type StorefrontTwigLinter struct{}
+
+func (s StorefrontTwigLinter) Name() string {
+	return "storefront-twig"
+}
+
+func (s StorefrontTwigLinter) Check(ctx context.Context, check *Check, config ToolConfig) error {
+	fixers := twiglinter.GetStorefrontFixers(version.Must(version.NewVersion(config.MinShopwellVersion)))
+
+	for _, p := range config.SourceDirectories {
+		twigDir := filepath.Join(p, "Resources", "views")
+
+		if _, err := os.Stat(twigDir); err != nil {
+			continue
+		}
+
+		err := filepath.WalkDir(twigDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+
+			if d.IsDir() {
+				return nil
+			}
+
+			if filepath.Ext(path) != twiglinter.TwigExtension {
+				return nil
+			}
+
+			file, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+
+			relPath := validation.NormalizeSourcePath(path, config.RootDir)
+
+			parsed, err := html.NewStorefrontParser(string(file))
+			if err != nil {
+				line := 0
+				var pe *html.ParseError
+				if errors.As(err, &pe) {
+					line = pe.Pos.Line
+				}
+				check.AddResult(validation.CheckResult{
+					Path:       relPath,
+					Message:    fmt.Sprintf("Failed to parse %s: %v. Create a GitHub issue with the file content.", relPath, err),
+					Severity:   validation.SeverityWarning,
+					Identifier: "could-not-parse-twig",
+					Line:       line,
+				})
+
+				return nil
+			}
+
+			for _, fixer := range fixers {
+				for _, message := range fixer.Check(parsed.Nodes) {
+					check.AddResult(validation.CheckResult{
+						Path:       relPath,
+						Message:    message.Message,
+						Severity:   message.Severity,
+						Identifier: message.Identifier,
+						Line:       message.Line,
+					})
+				}
+			}
+
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+func init() {
+	AddTool(StorefrontTwigLinter{})
+}

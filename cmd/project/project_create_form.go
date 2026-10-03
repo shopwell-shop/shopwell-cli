@@ -1,0 +1,630 @@
+package project
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"slices"
+	"time"
+
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/shyim/go-composer/repository"
+	"github.com/shyim/go-version"
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/proxy"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/system"
+	"github.com/shopwell-shop/shopwell-cli/internal/tui"
+)
+
+// dockerCheckTimeout bounds the `docker info` probe, so a wedged daemon (e.g.
+// Docker Desktop stuck while starting) reports "not running" instead of
+// hanging the wizard.
+const dockerCheckTimeout = 5 * time.Second
+
+// dockerAvailabilityForCreate reports the Docker dependency that blocks a
+// Docker-based project, or nil when Docker is usable. It is a variable so
+// tests can stub the docker daemon check.
+var dockerAvailabilityForCreate = func(ctx context.Context) *system.MissingDependency {
+	ctx, cancel := context.WithTimeout(ctx, dockerCheckTimeout)
+	defer cancel()
+
+	for _, m := range system.CheckProjectDependencies(ctx, true, nil, "") {
+		if m.Name == "Docker" {
+			missing := m
+			return &missing
+		}
+	}
+	return nil
+}
+
+// dockerUnavailableReason phrases a Docker MissingDependency for the create
+// form (e.g. "Docker is not running").
+func dockerUnavailableReason(missing *system.MissingDependency) string {
+	if missing.Reason == "not installed" {
+		return "Docker is not installed"
+	}
+	return "Docker is not running"
+}
+
+// validateDockerChoice rejects the Docker option while Docker is unavailable,
+// so the form blocks right at the Docker question instead of failing after
+// the user configured the whole project.
+func validateDockerChoice(choice string, dockerMissing *system.MissingDependency) error {
+	if choice == tui.Yes && dockerMissing != nil {
+		reason := dockerUnavailableReason(dockerMissing)
+		if dockerMissing.Reason == "not running" {
+			return fmt.Errorf("%s — start Docker to use it, or choose local PHP to continue without Docker", reason)
+		}
+		return fmt.Errorf("%s — install Docker to use it, or choose local PHP to continue without Docker", reason)
+	}
+	return nil
+}
+
+// dockerUnavailableError renders the standard missing-Docker box to stderr
+// and returns the failure, so forced --docker requests fail before the
+// network fetch and wizard instead of at the end of project creation.
+func dockerUnavailableError(missing *system.MissingDependency) error {
+	dockerHint := "re-run with " + tui.BoldText.Render("--docker")
+	fmt.Fprintln(os.Stderr, system.RenderMissingDependencies(true, []system.MissingDependency{*missing}, "create a Shopwell project", dockerHint))
+	return errors.New("missing required dependencies")
+}
+
+func runCreateForm(cmd *cobra.Command, opts *createOptions, releases []repository.Version, filteredVersions []*version.Version) error { //nolint:gocyclo
+	// The Docker question is only asked without --docker; a forced --docker
+	// request is already checked by the create command before the wizard.
+	dockerPrompted := !cmd.PersistentFlags().Changed("docker")
+	// Keep the --local-domain flag value, since opts.useLocalDomain is
+	// overwritten with the resolved choice on every pass.
+	flagLocalDomain := opts.useLocalDomain
+
+	type minorGroup struct {
+		label    string
+		versions []string
+	}
+	var minorGroups []minorGroup
+	minorIndex := map[string]int{}
+	for _, v := range filteredVersions {
+		segments := v.Segments()
+		key := fmt.Sprintf("%d.%d", segments[0], segments[1])
+		if idx, ok := minorIndex[key]; ok {
+			minorGroups[idx].versions = append(minorGroups[idx].versions, v.String())
+		} else {
+			minorIndex[key] = len(minorGroups)
+			minorGroups = append(minorGroups, minorGroup{label: key, versions: []string{v.String()}})
+		}
+	}
+
+	minorOptions := make([]huh.Option[string], 0, len(minorGroups)+2)
+	minorOptions = append(minorOptions, huh.NewOption(shop.VersionLatest, shop.VersionLatest))
+	for _, g := range minorGroups {
+		minorOptions = append(minorOptions, huh.NewOption(g.label, g.label))
+	}
+	// Trunk is not a release, so it cannot be a minor group; offer it explicitly
+	// to make development installs discoverable.
+	minorOptions = append(minorOptions, huh.NewOption("trunk (development version)", shop.VersionTrunk))
+
+	deploymentOptions := []huh.Option[string]{
+		huh.NewOption("None", shop.DeploymentNone),
+		huh.NewOption("Docker (Container)", shop.DeploymentContainer),
+		huh.NewOption("PaaS powered by Shopwell", shop.DeploymentShopwellPaaS),
+		huh.NewOption("PaaS powered by Platform.sh", shop.DeploymentPlatformSH),
+		huh.NewOption("Deployer (SSH-based)", shop.DeploymentDeployer),
+	}
+
+	ciOptions := []huh.Option[string]{
+		huh.NewOption("None", shop.CINone),
+		huh.NewOption("GitHub Actions", shop.CIGitHub),
+		huh.NewOption("GitLab CI", shop.CIGitLab),
+	}
+
+	needsProjectFolder := opts.projectFolder == ""
+	needsVersion := opts.selectedVersion == ""
+	needsDeployment := opts.selectedDeployment == ""
+	needsCI := opts.selectedCI == ""
+	// An explicit --php-version is authoritative and validated later, so the form
+	// must not offer a competing choice.
+	needsPHPVersion := !opts.phpVersionExplicit
+
+	needsAdvanced := needsDeployment || needsCI || needsPHPVersion ||
+		!cmd.PersistentFlags().Changed("git") ||
+		!cmd.PersistentFlags().Changed("with-amqp") ||
+		!opts.elasticsearchExplicit
+
+	selectDocker := tui.Yes
+	selectGit := tui.Yes
+	selectElasticsearch := tui.No
+	selectAMQP := tui.Yes
+
+	// When Docker is unavailable, default to local PHP so the Docker choice is
+	// opt-in (and rejected with guidance) instead of the pre-selected path
+	// that fails at the end of the wizard.
+	var dockerMissing *system.MissingDependency
+	if dockerPrompted {
+		dockerMissing = dockerAvailabilityForCreate(cmd.Context())
+		if dockerMissing != nil {
+			selectDocker = tui.No
+		}
+	}
+	firstPass := true
+
+	baseDomain := proxy.BaseDomain()
+	// Default to the stable hostname (recommended); only applies with Docker.
+	selectLocalDomain := true
+	// Whether this machine already resolves the proxy domain. When it does, the
+	// one-time sudo setup is already done, so we never ask for it again.
+	machineSetupDone := proxy.CheckResolverConfigured(baseDomain).Configured
+	selectSetupNow := tui.Yes
+
+	if !system.IsGitInstalled() {
+		selectGit = tui.No
+	}
+
+	if !opts.useDocker {
+		extensions, err := system.GetAvailablePHPExtensions(cmd.Context())
+		if err == nil && !slices.Contains(extensions, "amqp") {
+			selectAMQP = tui.No
+		}
+	}
+	selectedMinor := shop.VersionLatest
+
+	// Docker may come from the --docker flag or from the in-form question, and
+	// the PHP selection depends on the answer either way.
+	dockerSelected := func() bool {
+		if cmd.PersistentFlags().Changed("docker") {
+			return opts.useDocker
+		}
+		return selectDocker == tui.Yes
+	}
+
+	// The patch-version group stays hidden for "latest" and trunk and leaves
+	// opts.selectedVersion empty, which is only defaulted after the form ran.
+	effectiveVersion := func() string {
+		if opts.selectedVersion != "" {
+			return opts.selectedVersion
+		}
+		if selectedMinor == shop.VersionTrunk {
+			return shop.VersionTrunk
+		}
+		return shop.VersionLatest
+	}
+
+	// Discovery spawns a subprocess per candidate, so it runs at most once; only
+	// the constraint filtering is redone when the Shopwell version changes. Docker
+	// projects never reach it: their PHP comes from the image, not this machine.
+	var phpInstallations []system.PHPInstallation
+	phpDiscovered := false
+	compatiblePHPForSelection := func() []system.PHPInstallation {
+		if !phpDiscovered {
+			phpInstallations = discoverPHPInstallations(cmd.Context())
+			phpDiscovered = true
+		}
+		return filterCompatiblePHPFor(phpInstallations, releases, effectiveVersion(), filteredVersions)
+	}
+
+	// Docker image tags the selected Shopwell release supports.
+	dockerPHPForSelection := func() []string {
+		return phpConstraintFor(releases, effectiveVersion(), filteredVersions).SupportedVersions()
+	}
+
+	theme := huh.ThemeFunc(func(isDark bool) *huh.Styles {
+		s := huh.ThemeCharm(isDark)
+		s.Focused.Title = s.Focused.Title.Foreground(tui.BlueColor)
+		s.Blurred.Title = s.Blurred.Title.Foreground(tui.BlueColor)
+		return s
+	})
+
+	onOff := func(v bool) string {
+		if v {
+			return tui.GreenText.Render("Yes")
+		}
+		return tui.RedText.Render("No")
+	}
+
+	labelStyle := lipgloss.NewStyle().Width(20)
+
+	for {
+		var formGroups []*huh.Group
+
+		// Re-check Docker on every later pass so starting the daemon while the
+		// form is open unblocks the Docker option without restarting the CLI.
+		if dockerPrompted && !firstPass {
+			dockerMissing = dockerAvailabilityForCreate(cmd.Context())
+		}
+		firstPass = false
+
+		if needsProjectFolder {
+			formGroups = append(formGroups, huh.NewGroup(
+				huh.NewInput().
+					Title("Project Name").
+					Description(projectNameHelp).
+					Placeholder("my-shopwell-project").
+					Value(&opts.projectFolder).
+					Validate(func(s string) error {
+						if s == "" {
+							return nil
+						}
+						return shop.ValidateProjectFolder(s)
+					}),
+			))
+		}
+
+		if needsVersion {
+			formGroups = append(formGroups, huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Shopwell Version").
+					Description("Select the version to install; trunk tracks the latest development state").
+					Options(minorOptions...).
+					Value(&selectedMinor),
+			))
+
+			formGroups = append(formGroups, huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Patch Version").
+					Description("Select the specific patch version").
+					Height(10).
+					OptionsFunc(func() []huh.Option[string] {
+						if idx, ok := minorIndex[selectedMinor]; ok {
+							out := make([]huh.Option[string], 0, len(minorGroups[idx].versions))
+							for _, v := range minorGroups[idx].versions {
+								out = append(out, huh.NewOption(v, v))
+							}
+							return out
+						}
+						return []huh.Option[string]{huh.NewOption(shop.VersionLatest, shop.VersionLatest)}
+					}, &selectedMinor).
+					Value(&opts.selectedVersion),
+				// Trunk has no patch releases, so like "latest" it skips the
+				// patch selection entirely.
+			).WithHideFunc(func() bool {
+				return selectedMinor == shop.VersionLatest || selectedMinor == shop.VersionTrunk
+			}))
+		}
+
+		if dockerPrompted {
+			dockerDescription := "How do you want to run Shopwell?"
+			dockerOptionLabel := "Run Shopwell with Docker"
+			if dockerMissing != nil {
+				if dockerMissing.Reason == "not installed" {
+					dockerDescription = "How do you want to run Shopwell? Docker is not installed — install it to enable Docker, or continue with local PHP."
+				} else {
+					dockerDescription = "How do you want to run Shopwell? Docker is not running — start it to enable Docker, or continue with local PHP."
+				}
+				dockerOptionLabel = fmt.Sprintf("Run Shopwell with Docker (unavailable — %s)", dockerMissing.Reason)
+			}
+			formGroups = append(formGroups, huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Docker").
+					Description(dockerDescription).
+					Options(
+						huh.NewOption(dockerOptionLabel, tui.Yes),
+						huh.NewOption("Use PHP and Composer; Shopwell CLI handles the installation", tui.No),
+					).
+					Validate(func(v string) error {
+						return validateDockerChoice(v, dockerMissing)
+					}).
+					Value(&selectDocker),
+			))
+		}
+
+		if !cmd.PersistentFlags().Changed("local-domain") {
+			formGroups = append(formGroups, huh.NewGroup(
+				huh.NewSelect[bool]().
+					Title("Local domains").
+					Description("Reach this shop at a stable hostname instead of a changing port").
+					OptionsFunc(func() []huh.Option[bool] {
+						host := "<name>." + baseDomain
+						if opts.projectFolder != "" {
+							host = proxy.LocalDomainHostname(opts.projectFolder, baseDomain)
+						}
+						return []huh.Option[bool]{
+							huh.NewOption("Yes (recommended) — https://"+host, true),
+							huh.NewOption("No — use a port (http://localhost:8000)", false),
+						}
+					}, &opts.projectFolder).
+					Value(&selectLocalDomain),
+				// The shared proxy is Docker-only, so this choice is irrelevant
+				// without Docker (respecting a --docker flag override).
+			).WithHideFunc(func() bool {
+				if cmd.PersistentFlags().Changed("docker") {
+					return !opts.useDocker
+				}
+				return selectDocker != tui.Yes
+			}))
+
+			// Offer the one-time machine setup inline, but only when it is
+			// actually needed: local domains chosen, Docker on, and the machine
+			// not configured yet. Every later project skips this automatically.
+			formGroups = append(formGroups, huh.NewGroup(
+				tui.NewYesNo().
+					Title("Set up local domains on this machine now?").
+					Description("One-time sudo: makes *."+baseDomain+" resolve and trusts its HTTPS certificate. Skip to run `shopwell-cli project proxy setup` later.").
+					Value(&selectSetupNow),
+			).WithHideFunc(func() bool {
+				if machineSetupDone {
+					return true
+				}
+				dockerOn := selectDocker == tui.Yes
+				if cmd.PersistentFlags().Changed("docker") {
+					dockerOn = opts.useDocker
+				}
+				localOn := selectLocalDomain
+				if cmd.PersistentFlags().Changed("local-domain") {
+					localOn = flagLocalDomain
+				}
+				return !dockerOn || !localOn
+			}))
+		}
+
+		selectAdvanced := tui.No
+		if needsAdvanced {
+			formGroups = append(formGroups, huh.NewGroup(
+				tui.NewYesNo().
+					Title("Do you want to further customize the project creation?").
+					Description("Configure PHP, deployment, CI/CD, and optional features").
+					Value(&selectAdvanced),
+			))
+		}
+
+		// A local project selects an executable installed on this machine; a Docker
+		// project selects an image tag. phpGroupShown must not depend on OptionsFunc
+		// having run: huh evaluates WithHideFunc during navigation, while OptionsFunc
+		// is dispatched asynchronously, so deciding visibility from its options hides
+		// the group forever.
+		var selectedPHP string
+		phpCandidates := func() int {
+			if dockerSelected() {
+				return len(dockerPHPForSelection())
+			}
+			return len(compatiblePHPForSelection())
+		}
+		phpGroupShown := func() bool {
+			return selectAdvanced == tui.Yes && shouldPromptPHPSelection(phpCandidates())
+		}
+
+		if needsPHPVersion {
+			formGroups = append(formGroups, huh.NewGroup(
+				huh.NewSelect[string]().
+					TitleFunc(func() string {
+						if dockerSelected() {
+							return "PHP Version"
+						}
+						return "PHP Executable"
+					}, &selectDocker).
+					DescriptionFunc(func() string {
+						if dockerSelected() {
+							return "Select the PHP version of the Docker image (persisted as docker.php.version in .config/shopwell-project.yml)"
+						}
+						return "Select the PHP used to create and run this project (its version is persisted as php_version in .config/shopwell-project.yml)"
+					}, &selectDocker).
+					Height(10).
+					OptionsFunc(func() []huh.Option[string] {
+						if dockerSelected() {
+							versions := dockerPHPForSelection()
+							if !slices.Contains(versions, selectedPHP) {
+								selectedPHP = highestOrEmpty(versions)
+							}
+							return phpVersionOptions(versions)
+						}
+
+						compatible := compatiblePHPForSelection()
+						// Keep the selection valid when changing the Shopwell
+						// version narrows the compatible set.
+						if system.FindPHPByBinary(compatible, selectedPHP) == nil {
+							selectedPHP = ""
+							if preferred := system.PreferredPHPInstallation(compatible); preferred != nil {
+								selectedPHP = preferred.Binary
+							}
+						}
+						return phpInstallationOptions(compatible)
+					}, []*string{&selectDocker, &opts.selectedVersion}).
+					Value(&selectedPHP),
+			).WithHideFunc(func() bool { return !phpGroupShown() }))
+		}
+
+		if needsDeployment {
+			opts.selectedDeployment = shop.DeploymentNone
+			formGroups = append(formGroups, huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("Deployment Method").
+					Description("Select how you want to deploy your project").
+					Options(deploymentOptions...).
+					Value(&opts.selectedDeployment),
+			).WithHideFunc(func() bool { return selectAdvanced != tui.Yes }))
+		}
+
+		if needsCI {
+			opts.selectedCI = shop.CINone
+			formGroups = append(formGroups, huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("CI/CD System").
+					Description("Select your CI/CD platform for automated testing and deployment").
+					Options(ciOptions...).
+					Value(&opts.selectedCI),
+			).WithHideFunc(func() bool { return selectAdvanced != tui.Yes }))
+		}
+
+		if !cmd.PersistentFlags().Changed("git") {
+			formGroups = append(formGroups, huh.NewGroup(
+				tui.NewYesNo().
+					Title("Git Repository").
+					Description("Initialize a Git repository for version control").
+					Value(&selectGit),
+			).WithHideFunc(func() bool { return selectAdvanced != tui.Yes }))
+		}
+
+		if !opts.elasticsearchExplicit {
+			formGroups = append(formGroups, huh.NewGroup(
+				tui.NewYesNo().
+					Title("OpenSearch").
+					Description("Set up OpenSearch for large catalogs and advanced search").
+					Value(&selectElasticsearch),
+			).WithHideFunc(func() bool { return selectAdvanced != tui.Yes }))
+		}
+
+		if !cmd.PersistentFlags().Changed("with-amqp") {
+			formGroups = append(formGroups, huh.NewGroup(
+				tui.NewYesNo().
+					Title("AMQP").
+					Description("Enable AMQP queue support for background jobs and messaging").
+					Value(&selectAMQP),
+			).WithHideFunc(func() bool { return selectAdvanced != tui.Yes }))
+		}
+
+		if len(formGroups) > 0 {
+			form := huh.NewForm(formGroups...).WithTheme(theme)
+			if err := form.Run(); err != nil {
+				return err
+			}
+		}
+
+		if needsVersion {
+			opts.selectedVersion = resolveFormVersion(selectedMinor, opts.selectedVersion)
+		}
+
+		if opts.projectFolder == "" {
+			opts.projectFolder = "."
+		}
+
+		if !cmd.PersistentFlags().Changed("docker") {
+			opts.useDocker = selectDocker == tui.Yes
+		}
+		// Docker may have stopped while the wizard was open. Catch it here —
+		// before the summary and the long install — instead of failing at the
+		// very end. An explicit --docker request is never downgraded: it fails.
+		// Otherwise the form restarts with local PHP pre-selected.
+		if opts.useDocker {
+			if missing := dockerAvailabilityForCreate(cmd.Context()); missing != nil {
+				if !dockerPrompted {
+					return dockerUnavailableError(missing)
+				}
+				_ = dockerUnavailableError(missing)
+				selectDocker = tui.No
+				opts.useDocker = false
+				continue
+			}
+		}
+		// The local-domain choice comes from the --local-domain flag when set,
+		// otherwise from the prompt. The one-time setup is only offered inline
+		// when we actually prompted for it (not via the flag), so the flag never
+		// triggers an unprompted sudo.
+		localFlagChanged := cmd.PersistentFlags().Changed("local-domain")
+		wantLocalDomain := flagLocalDomain
+		if !localFlagChanged {
+			wantLocalDomain = selectLocalDomain
+		}
+		opts.useLocalDomain, opts.setupProxyNow = resolveLocalDomainChoice(
+			opts.useDocker, wantLocalDomain, !localFlagChanged, machineSetupDone, selectSetupNow == tui.Yes)
+		if !cmd.PersistentFlags().Changed("git") {
+			opts.initGit = selectGit == tui.Yes
+		}
+		if !opts.elasticsearchExplicit {
+			opts.withElasticsearch = selectElasticsearch == tui.Yes
+		}
+		if !cmd.PersistentFlags().Changed("with-amqp") {
+			opts.withAMQP = selectAMQP == tui.Yes
+		}
+		if needsPHPVersion {
+			// Reset on every round so switching to Docker (or restarting the
+			// form) does not keep a stale selection from a previous pass.
+			opts.clearPHP()
+			switch {
+			case opts.useDocker:
+				// Only a version, since the PHP comes from the image. Left empty
+				// when unanswered: installAndFinalize then picks the highest the
+				// release supports.
+				if phpGroupShown() {
+					opts.phpVersion = selectedPHP
+				}
+			case phpGroupShown():
+				if selected := system.FindPHPByBinary(compatiblePHPForSelection(), selectedPHP); selected != nil {
+					opts.setPHP(*selected)
+				}
+			default:
+				// Nothing was asked (at most one compatible install), but resolve
+				// it anyway so the summary shows the PHP that will be used.
+				if preferred := system.PreferredPHPInstallation(compatiblePHPForSelection()); preferred != nil {
+					opts.setPHP(*preferred)
+				}
+			}
+		}
+
+		fmt.Println()
+		fmt.Println(tui.SectionHeadingStyle.Render("Summary"))
+		fmt.Println()
+		projectDisplay := opts.projectFolder
+		if projectDisplay == "." {
+			if wd, err := os.Getwd(); err == nil {
+				projectDisplay = wd
+			}
+		}
+		fmt.Printf("  %s %s\n", labelStyle.Render("Project name:"), projectDisplay)
+		fmt.Printf("  %s %s\n", labelStyle.Render("Version:"), opts.selectedVersion)
+		fmt.Printf("  %s %s\n", labelStyle.Render("Deployment:"), opts.selectedDeployment)
+		fmt.Printf("  %s %s\n", labelStyle.Render("CI/CD:"), opts.selectedCI)
+		fmt.Printf("  %s %s\n", labelStyle.Render("Docker:"), onOff(opts.useDocker))
+		if opts.phpVersion != "" {
+			phpDisplay := opts.phpVersion
+			if opts.phpBinary != "" {
+				phpDisplay += " (" + opts.phpBinary + ")"
+			}
+			fmt.Printf("  %s %s\n", labelStyle.Render("PHP:"), phpDisplay)
+		}
+		if opts.useDocker {
+			localDomainValue := onOff(opts.useLocalDomain)
+			if opts.useLocalDomain {
+				localDomainValue = tui.GreenText.Render("https://" + proxy.LocalDomainHostname(opts.projectFolder, baseDomain))
+			}
+			fmt.Printf("  %s %s\n", labelStyle.Render("Local domain:"), localDomainValue)
+		}
+		fmt.Printf("  %s %s\n", labelStyle.Render("Git Repository:"), onOff(opts.initGit))
+		fmt.Printf("  %s %s\n", labelStyle.Render("OpenSearch:"), onOff(opts.withElasticsearch))
+		fmt.Printf("  %s %s\n", labelStyle.Render("AMQP:"), onOff(opts.withAMQP))
+		fmt.Println()
+
+		selectConfirm := "proceed"
+		confirmForm := huh.NewForm(huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("What would you like to do?").
+				Options(
+					huh.NewOption("Proceed", "proceed"),
+					huh.NewOption("Restart form", "restart"),
+					huh.NewOption("Cancel", "cancel"),
+				).
+				Value(&selectConfirm),
+		)).WithTheme(theme)
+
+		if err := confirmForm.Run(); err != nil {
+			return err
+		}
+
+		if selectConfirm == "proceed" {
+			return nil
+		}
+
+		if selectConfirm == "cancel" {
+			return errors.New("project creation cancelled")
+		}
+	}
+}
+
+// resolveFormVersion maps the form's version selection to the version to
+// install. The patch select stays hidden for "latest" and trunk, so their
+// minor selection is authoritative and any stale patch value from a previous
+// form pass is discarded.
+func resolveFormVersion(selectedMinor, selectedVersion string) string {
+	switch selectedMinor {
+	case shop.VersionTrunk:
+		return shop.VersionTrunk
+	case shop.VersionLatest:
+		return shop.VersionLatest
+	}
+
+	if selectedVersion == "" {
+		return shop.VersionLatest
+	}
+	return selectedVersion
+}

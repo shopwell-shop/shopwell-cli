@@ -1,0 +1,44 @@
+/.idea
+/.fleet
+/shopwell-cli*
+/swx
+dist/
+/completions
+/local
+/bin
+/.shopwell-cli
+/.shopwell-project.yml
+/.shopwell-project.yaml
+/.config/shopwell-project.yml
+/.config/shopwell-extension.yml
+/test-app
+/go-shopwell-admin-api-sdk
+/*.zip
+/Frosh*
+/Swag*
+/result
+/project
+dump.sql*
+
+/testdata
+
+# Devenv
+.devenv*
+devenv.local.nix
+
+# mise local overrides
+/mise.local.toml
+/.mise.local.toml
+
+/.direnv
+/env-bridge/env-bridge
+
+# Go cache
+/.gocache
+/.gomodcache
+/.gopath
+.soulforge
+.claude/scheduled_tasks.lock
+
+# Go test binaries
+*.test

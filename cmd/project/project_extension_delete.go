@@ -1,0 +1,92 @@
+package project
+
+import (
+	"errors"
+
+	"github.com/spf13/cobra"
+
+	adminSdk "github.com/shopwell-shop/shopwell-cli/internal/admin-api"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+var projectExtensionDeleteCmd = &cobra.Command{
+	Use:     "delete name...",
+	Short:   "Delete one or more extensions from a Shopwell project",
+	Args:    cobra.MinimumNArgs(1),
+	Aliases: []string{"rm"},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		projectRoot, err := shop.FindClosestShopwellProject(true)
+		if err != nil {
+			return err
+		}
+
+		cmdExecutor, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return err
+		}
+
+		client, err := cmdExecutor.AdminAPIClient(cmd.Context())
+		if err != nil {
+			return err
+		}
+
+		extensions, _, err := client.ExtensionManager.ListAvailableExtensions(adminSdk.NewApiContext(cmd.Context()))
+		if err != nil {
+			return err
+		}
+
+		failed := false
+
+		for _, arg := range args {
+			extension := extensions.GetByName(arg)
+
+			if extension == nil {
+				failed = true
+				logging.FromContext(cmd.Context()).Errorf("Cannot find extension %s, run \"shopwell-cli project extension list\" to see installed extensions", arg)
+				continue
+			}
+
+			if extension.Active {
+				if _, err := client.ExtensionManager.DeactivateExtension(adminSdk.NewApiContext(cmd.Context()), extension.Type, extension.Name); err != nil {
+					failed = true
+
+					logging.FromContext(cmd.Context()).Errorf("Deactivation of %s failed with error: %v", extension.Name, err)
+					continue
+				}
+
+				logging.FromContext(cmd.Context()).Infof("Deactivated %s", extension.Name)
+			}
+
+			if extension.InstalledAt != nil {
+				if _, err := client.ExtensionManager.UninstallExtension(adminSdk.NewApiContext(cmd.Context()), extension.Type, extension.Name); err != nil {
+					failed = true
+
+					logging.FromContext(cmd.Context()).Errorf("Uninstall of %s failed with error: %v", extension.Name, err)
+					continue
+				}
+
+				logging.FromContext(cmd.Context()).Infof("Uninstalled %s", extension.Name)
+			}
+
+			if _, err := client.ExtensionManager.RemoveExtension(adminSdk.NewApiContext(cmd.Context()), extension.Type, extension.Name); err != nil {
+				failed = true
+
+				logging.FromContext(cmd.Context()).Errorf("Removal of %s failed with error: %v", extension.Name, err)
+				continue
+			}
+
+			logging.FromContext(cmd.Context()).Infof("Removed %s", extension.Name)
+		}
+
+		if failed {
+			return errors.New("delete failed")
+		}
+
+		return nil
+	},
+}
+
+func init() {
+	projectExtensionCmd.AddCommand(projectExtensionDeleteCmd)
+}

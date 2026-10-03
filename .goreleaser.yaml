@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+project_name: shopwell-cli
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+    - ./scripts/completion.sh
+
+builds:
+  - id: shopwell-cli
+    binary: shopwell-cli
+    env:
+      - CGO_ENABLED=0
+    ldflags: -s -w -X 'github.com/shopwell-shop/shopwell-cli/internal/cliversion.Version={{ .Version }}'
+    flags:
+      - -trimpath
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: shopwell-cli
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - NOTICE
+      - completions/*
+
+release:
+  github:
+    owner: shopwell-shop
+    name: shopwell-cli
+  prerelease: auto
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^Merge pull request:'

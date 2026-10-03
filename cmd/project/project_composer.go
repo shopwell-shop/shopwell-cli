@@ -1,0 +1,47 @@
+package project
+
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+)
+
+var projectComposerCmd = &cobra.Command{
+	Use:   "composer command [args...]",
+	Short: "Run Composer through a project's configured executor",
+	Long:  "Pass all arguments to Composer using the project's configured executor (local, Docker, or Symfony CLI).",
+	Example: `  shopwell-cli project composer install
+  shopwell-cli project composer require shopwell/dev-tools
+  shopwell-cli project composer update --with-all-dependencies`,
+	DisableFlagParsing: true,
+	ValidArgsFunction: func(cmd *cobra.Command, input []string, _ string) ([]string, cobra.ShellCompDirective) {
+		projectRoot, err := shop.FindClosestShopwellProject(false)
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveDefault
+		}
+
+		cmdExecutor, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveDefault
+		}
+
+		return composerCommandCompletions(cmd, projectRoot, input, cmdExecutor)
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		projectRoot, err := shop.FindClosestShopwellProject(false)
+		if err != nil {
+			return err
+		}
+
+		cmdExecutor, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return err
+		}
+
+		return runExecutorProcess(cmd, cmdExecutor.ComposerCommand(consoleCommandContext(cmd.Context()), args...))
+	},
+}
+
+func init() {
+	projectRootCmd.AddCommand(projectComposerCmd)
+}

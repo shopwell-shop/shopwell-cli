@@ -1,0 +1,71 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - exhaustive
+    - goprintffuncname
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - noctx
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+    - asciicheck
+    - gocyclo
+    - gocritic
+    - errcheck
+    - thelper
+    - tparallel
+    - predeclared
+    - nilerr
+    - makezero
+    - forbidigo
+    - errname
+    - nilnil
+    - usetesting
+    - bidichk
+    - containedctx
+    - decorder
+    - dogsled
+    - dupword
+    - durationcheck
+    - errname
+    - ginkgolinter
+    - gocheckcompilerdirectives
+    - godox
+    - nilnil
+    - perfsprint
+  exclusions:
+    rules:
+      - path: cmd\/*
+        linters:
+          - forbidigo
+      - path: internal\/ci\/*
+        linters:
+          - forbidigo
+      - path: internal\/validation\/*
+        linters:
+          - forbidigo
+      - path: internal\/tui\/*
+        linters:
+          - forbidigo
+      - path: internal\/account-api\/*
+        linters:
+          - forbidigo
+
+formatters:
+  enable:
+    - gofmt
+    - gci
+  settings:
+    gci:
+      sections:
+        - Standard
+        - Default
+        - "Prefix(github.com/shopwell-shop/shopwell-cli)"
+  

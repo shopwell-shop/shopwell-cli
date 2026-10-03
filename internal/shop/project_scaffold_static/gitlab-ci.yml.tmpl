@@ -1,0 +1,15 @@
+stages:
+  - check
+{{- if .Deployer }}
+  - deploy
+{{- end }}
+
+include:
+  - component: gitlab.com/shopwell/ci-components/project-validate@main
+    inputs:
+      php_version: "8.4"
+{{- if .Deployer }}
+  - component: gitlab.com/shopwell/ci-components/project-deployer@main
+    inputs:
+      php_version: "8.4"
+{{- end }}

@@ -1,0 +1,100 @@
+package project
+
+import (
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/executor"
+	"github.com/shopwell-shop/shopwell-cli/internal/extension"
+	"github.com/shopwell-shop/shopwell-cli/internal/projectbuild"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+var projectStorefrontBuildCmd = &cobra.Command{
+	Use:     "storefront-build [path]",
+	Short:   "Build and install Storefront assets",
+	Aliases: []string{"build-storefront"},
+	Args:    cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var projectRoot string
+		var err error
+
+		if len(args) == 1 {
+			// We need an absolute path for webpack
+			projectRoot, err = filepath.Abs(args[0])
+			if err != nil {
+				return err
+			}
+		} else if projectRoot, err = shop.FindClosestShopwellProject(false); err != nil {
+			return err
+		}
+
+		actualProjectConfigPath := shop.SearchConfigPath(cmd.Context(), projectRoot, projectConfigPath)
+		shopCfg, err := shop.ReadConfig(cmd.Context(), actualProjectConfigPath, projectConfigPath == "")
+		if err != nil {
+			return err
+		}
+
+		cmdExecutor, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return err
+		}
+
+		logging.FromContext(cmd.Context()).Infof("Looking for extensions to build assets in project")
+
+		if err := projectbuild.RunCommand(cmdExecutor.ConsoleCommand(executor.AllowBinCI(cmd.Context()), "feature:dump")); err != nil {
+			return err
+		}
+
+		sources, err := filterAndGetSources(cmd, projectRoot, shopCfg)
+		if err != nil {
+			return err
+		}
+
+		forceInstall, _ := cmd.PersistentFlags().GetBool("force-install-dependencies")
+
+		shopwellConstraint, err := extension.GetShopwellProjectConstraint(projectRoot)
+		if err != nil {
+			return err
+		}
+
+		assetCfg := extension.AssetBuildConfig{
+			DisableAdminBuild: true,
+			ShopwellRoot:      projectRoot,
+			ShopwellVersion:   shopwellConstraint,
+			NPMForceInstall:   forceInstall,
+			Executor:          cmdExecutor,
+		}
+
+		if err := extension.BuildAssetsForExtensions(cmd.Context(), sources, assetCfg); err != nil {
+			return err
+		}
+
+		skipAssetsInstall, _ := cmd.PersistentFlags().GetBool("skip-assets-install")
+		if !skipAssetsInstall {
+			if err := projectbuild.RunCommand(cmdExecutor.ConsoleCommand(cmd.Context(), "assets:install")); err != nil {
+				return err
+			}
+		}
+
+		skipThemeCompile, _ := cmd.PersistentFlags().GetBool("skip-theme-compile")
+		if skipThemeCompile {
+			return nil
+		}
+
+		return projectbuild.RunCommand(cmdExecutor.ConsoleCommand(executor.AllowBinCI(cmd.Context()), "theme:compile"))
+	},
+}
+
+func init() {
+	projectRootCmd.AddCommand(projectStorefrontBuildCmd)
+	projectStorefrontBuildCmd.PersistentFlags().Bool("skip-assets-install", false, "Skip installing built assets")
+	projectStorefrontBuildCmd.PersistentFlags().Bool("skip-theme-compile", false, "Skip theme compilation")
+	projectStorefrontBuildCmd.PersistentFlags().Bool("force-install-dependencies", false, "Force-install npm dependencies")
+	projectStorefrontBuildCmd.PersistentFlags().String("only-extensions", "", "Build only the specified extensions (comma-separated)")
+	projectStorefrontBuildCmd.PersistentFlags().Bool("select-extensions", false, "Select extensions interactively")
+	projectStorefrontBuildCmd.PersistentFlags().String("skip-extensions", "", "Skip the specified extensions (comma-separated)")
+	projectStorefrontBuildCmd.PersistentFlags().Bool("only-custom-static-extensions", false, "Build only extensions in the custom/static-plugins directory")
+}

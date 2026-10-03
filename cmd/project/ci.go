@@ -1,0 +1,87 @@
+package project
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/cliversion"
+	internalgit "github.com/shopwell-shop/shopwell-cli/internal/git"
+	"github.com/shopwell-shop/shopwell-cli/internal/projectbuild"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/system"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+var projectCI = &cobra.Command{
+	Use:   "ci path",
+	Short: "Turn a project directory into a production build (removes dev files, adds SBOM)",
+	Long: "Build the given Shopwell project directory for production and generate an SBOM. The directory itself is changed: development-only files (tests, Administration sources, source maps, build.cleanup_paths) are removed, and empty placeholders are added so Shopwell still runs without them.\n" +
+		"Use it in CI or on a disposable checkout; outside CI it refuses to run with uncommitted changes or untracked files unless --force is passed.",
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		root, err := filepath.Abs(args[0])
+		if err != nil {
+			return err
+		}
+		force, err := cmd.Flags().GetBool("force")
+		if err != nil {
+			return err
+		}
+		if err := projectCISafetyCheck(cmd.Context(), root, force, os.Getenv); err != nil {
+			return err
+		}
+
+		actualProjectConfigPath := shop.SearchConfigPath(cmd.Context(), ".", projectConfigPath)
+		shopCfg, err := shop.ReadConfig(cmd.Context(), actualProjectConfigPath, projectConfigPath == "")
+		if err != nil {
+			return err
+		}
+		envCfg, err := shopCfg.ResolveEnvironment(environmentName)
+		if err != nil {
+			return err
+		}
+		withDev, err := cmd.Flags().GetBool("with-dev-dependencies")
+		if err != nil {
+			return err
+		}
+
+		return projectbuild.Build(cmd.Context(), root, shopCfg, envCfg, projectbuild.Options{
+			WithDevDependencies: withDev,
+			ToolVersion:         cliversion.Version,
+		})
+	},
+}
+
+func init() {
+	projectRootCmd.AddCommand(projectCI)
+	projectCI.PersistentFlags().Bool("with-dev-dependencies", false, "Include Composer dev dependencies in the build")
+	projectCI.PersistentFlags().Bool("force", false, "Run the build outside CI despite uncommitted changes or untracked files")
+}
+
+func projectCISafetyCheck(ctx context.Context, root string, force bool, getenv func(string) string) error {
+	if force || system.IsCIEnvironment(getenv) {
+		return nil
+	}
+
+	dirty, isGitRepository, err := internalgit.IsWorkingTreeDirty(ctx, root)
+	if err != nil {
+		return err
+	}
+
+	if !isGitRepository {
+		logging.FromContext(ctx).Warnf("Running project ci outside a CI environment; this command removes source files and should usually only be used in CI")
+		return nil
+	}
+
+	if dirty {
+		return errors.New("project ci removes source files and creates build stubs; refusing to run outside CI with a dirty git working tree. Commit, stash, or clean local changes, or pass --force if you intentionally want to run it")
+	}
+
+	logging.FromContext(ctx).Warnf("Running project ci outside a CI environment; this command removes source files and should usually only be used in CI")
+
+	return nil
+}

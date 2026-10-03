@@ -1,0 +1,21 @@
+{
+    "name": "test/test-plugin",
+    "type": "shopwell-platform-plugin",
+    "version": "1.0.0",
+    "license": "MIT",
+    "description": "Test plugin",
+    "require": {
+        "shopwell/core": "~6.6.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Test\\TestPlugin\\": "src/"
+        }
+    },
+    "extra": {
+        "shopwell-plugin-class": "Test\\TestPlugin\\TestPlugin",
+        "label": {
+            "en-GB": "Test Plugin"
+        }
+    }
+}

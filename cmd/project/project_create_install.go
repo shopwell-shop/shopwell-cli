@@ -1,0 +1,295 @@
+package project
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"charm.land/huh/v2"
+	"github.com/spf13/cobra"
+
+	dockerpkg "github.com/shopwell-shop/shopwell-cli/internal/docker"
+	"github.com/shopwell-shop/shopwell-cli/internal/git"
+	"github.com/shopwell-shop/shopwell-cli/internal/proxy"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/system"
+	"github.com/shopwell-shop/shopwell-cli/internal/tui"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+func installAndFinalize(cmd *cobra.Command, opts *createOptions, phpConstraint *shop.PHPConstraint, chosenVersion string) error {
+	ctx := cmd.Context()
+
+	logging.FromContext(ctx).Infof("Installing dependencies")
+
+	showSpinner := system.IsInteractionEnabled(ctx) && !opts.isVerbose
+
+	composerInstallPHP := ""
+	if opts.useDocker {
+		// An explicitly requested version wins; otherwise pick the newest PHP the
+		// selected Shopwell release supports.
+		composerInstallPHP = opts.phpVersion
+		if composerInstallPHP == "" {
+			composerInstallPHP = phpConstraint.HighestSupported()
+			opts.phpVersion = composerInstallPHP
+		}
+		logging.FromContext(ctx).Infof("Using PHP %s for composer install", composerInstallPHP)
+	} else if opts.phpBinary != "" {
+		logging.FromContext(ctx).Infof("Using PHP %s (%s) for composer install", opts.phpVersion, opts.phpBinary)
+	}
+
+	if output, err := runComposerInstall(ctx, opts.projectFolder, opts.useDocker, showSpinner, composerInstallPHP, opts.phpBinary); err != nil {
+		if !isComposerSecurityBlocked(output) || opts.noAudit {
+			return err
+		}
+
+		if err := handleSecurityBlockedInstall(ctx, opts, chosenVersion); err != nil {
+			return err
+		}
+
+		if _, err := runComposerInstall(ctx, opts.projectFolder, opts.useDocker, showSpinner, composerInstallPHP, opts.phpBinary); err != nil {
+			return err
+		}
+	}
+
+	if opts.useDocker {
+		env, err := dockerpkg.NewEnvironment(opts.projectFolder, dockerpkg.Options{PHP: dockerpkg.PHP{Version: composerInstallPHP}})
+		if err != nil {
+			return err
+		}
+		if err := env.WriteCompose(); err != nil {
+			return err
+		}
+	}
+
+	if opts.initGit {
+		logging.FromContext(ctx).Infof("Initializing Git repository")
+		if err := git.Init(ctx, opts.projectFolder); err != nil {
+			return fmt.Errorf("failed to initialize git repository: %w", err)
+		}
+	}
+
+	shopCfg := newProjectConfig(opts, composerInstallPHP)
+
+	// Serve the shop at a stable hostname through the shared proxy instead of a
+	// port.
+	if opts.useDocker && opts.useLocalDomain {
+		url := "https://" + proxy.LocalDomainHostname(opts.projectFolder, proxy.BaseDomain())
+		if env := shopCfg.Environments["local"]; env != nil {
+			env.URL = url
+		}
+	}
+
+	if err := shop.WriteConfig(shopCfg, opts.projectFolder); err != nil {
+		return err
+	}
+
+	printCreateSummary(ctx, opts)
+	return nil
+}
+
+func newProjectConfig(opts *createOptions, composerInstallPHP string) *shop.Config {
+	shopCfg := shop.NewConfig()
+	if opts.useDocker {
+		shopCfg.Environments["local"].Type = "docker"
+		shopCfg.Docker = &shop.ConfigDocker{
+			PHP: &shop.ConfigDockerPHP{Version: composerInstallPHP},
+		}
+	} else if opts.phpVersion != "" {
+		// The version, not the executable path: the same PHP lives elsewhere on
+		// other machines, so later commands look it up locally.
+		shopCfg.PHPVersion = opts.phpVersion
+	}
+
+	if opts.selectedDeployment == shop.DeploymentShopwellPaaS {
+		shopCfg.ConfigDeployment = &shop.ConfigDeployment{
+			OpenSearch: &shop.ConfigDeploymentOpenSearch{IndexOnInstall: true},
+		}
+	}
+
+	return shopCfg
+}
+
+func printCreateSummary(ctx context.Context, opts *createOptions) {
+	projectDisplay := opts.projectFolder
+	if projectDisplay == "." {
+		if wd, err := os.Getwd(); err == nil {
+			projectDisplay = wd
+		}
+	}
+
+	if !opts.interactive {
+		logging.FromContext(ctx).Infof("Project created successfully in %s", projectDisplay)
+		return
+	}
+
+	fmt.Println()
+	fmt.Println(tui.GreenText.Render("✔ Setup complete in " + projectDisplay))
+
+	if opts.useDocker {
+		shopURL := "http://127.0.0.1:8000"
+		if opts.useLocalDomain {
+			shopURL = "https://" + proxy.LocalDomainHostname(opts.projectFolder, proxy.BaseDomain())
+		}
+
+		fmt.Println()
+		fmt.Println(tui.SectionHeadingStyle.Render("Next steps"))
+		fmt.Println()
+		if opts.projectFolder == "." {
+			fmt.Printf("  %s  %s\n", tui.GreenText.Render("Start developing:"), tui.BoldText.Render("shopwell-cli project dev"))
+		} else {
+			fmt.Printf("  %s  %s\n", tui.GreenText.Render("Start developing:"), tui.BoldText.Render(fmt.Sprintf("cd %s && shopwell-cli project dev", opts.projectFolder)))
+		}
+		if opts.useLocalDomain && !proxy.CheckResolverConfigured(proxy.BaseDomain()).Configured {
+			fmt.Println()
+			fmt.Println(tui.DimText.Render("  First time on this machine? Run ") + tui.BoldText.Render("shopwell-cli project proxy setup") + tui.DimText.Render(" once (needs sudo)"))
+			fmt.Println(tui.DimText.Render("  so the local domain resolves and its certificate is trusted."))
+		}
+		fmt.Println()
+		fmt.Println(tui.SectionHeadingStyle.Render("Access your shop"))
+		fmt.Println()
+		fmt.Printf("  %s  %s\n", tui.GreenText.Render("Storefront:"), tui.BoldText.Render(shopURL))
+		fmt.Printf("  %s  %s\n", tui.GreenText.Render("Admin:"), tui.BoldText.Render(shopURL+"/admin"))
+		fmt.Printf("  %s  %s\n", tui.GreenText.Render("Credentials:"), tui.BoldText.Render("admin")+" / "+tui.BoldText.Render("shopwell"))
+
+		if opts.useLocalDomain {
+			hostname := proxy.LocalDomainHostname(opts.projectFolder, proxy.BaseDomain())
+			maybePrintWSLWindowsAccess(proxyBrowserHostnames(opts.projectFolder, hostname))
+		}
+	}
+
+	if opts.selectedDeployment == shop.DeploymentContainer {
+		fmt.Println()
+		fmt.Println(tui.SectionHeadingStyle.Render("Deploy as a container"))
+		fmt.Println()
+		fmt.Printf("  %s  %s\n", tui.GreenText.Render("Dockerfile:"), tui.BoldText.Render("Dockerfile")+tui.DimText.Render(" (PHP "+opts.phpVersion+")"))
+		fmt.Printf("  %s  %s\n", tui.GreenText.Render("Build:"), tui.BoldText.Render("docker build -t "+filepath.Base(projectDisplay)+" ."))
+	}
+
+	fmt.Println()
+}
+
+// isComposerSecurityBlocked reports whether composer output indicates that
+// dependency resolution failed because packages affected by security
+// advisories were blocked (composer >= 2.9 with audit blocking enabled).
+func isComposerSecurityBlocked(output string) bool {
+	return strings.Contains(output, "affected by security advisories")
+}
+
+// handleSecurityBlockedInstall is called when composer refused to install
+// dependencies affected by security advisories. Interactively it asks the user
+// whether to continue without audit blocking and rewrites composer.json with
+// audit blocking disabled; non-interactively it fails with a --no-audit hint.
+func handleSecurityBlockedInstall(ctx context.Context, opts *createOptions, chosenVersion string) error {
+	if !opts.interactive {
+		return fmt.Errorf("dependencies of Shopwell %s are affected by known security advisories; re-run with --no-audit to proceed. We strongly recommend installing the Shopwell Security plugin (https://store.shopwell.cn/en/swag136939272659f/shopwell-6-security-plugin.html) which backports security fixes to older versions", chosenVersion)
+	}
+
+	var continueAnyway string
+	if err := huh.NewForm(huh.NewGroup(
+		tui.NewYesNo().
+			Title(fmt.Sprintf("Dependencies of Shopwell %s are affected by known security advisories", chosenVersion)).
+			Description("Composer refused to install packages affected by security advisories. Continuing will disable composer's audit blocking (--no-audit) so installation can proceed. If you continue, we strongly recommend installing the Shopwell Security plugin (https://store.shopwell.cn/en/swag136939272659f/shopwell-6-security-plugin.html) which backports security fixes to older versions. Do you want to continue anyway?").
+			Value(&continueAnyway),
+	)).Run(); err != nil {
+		return err
+	}
+
+	if continueAnyway == tui.No {
+		return errors.New("project creation cancelled")
+	}
+
+	opts.noAudit = true
+	scaffold := newShopwellProjectScaffold(opts, chosenVersion)
+	if err := scaffold.WriteComposerJson(ctx); err != nil {
+		return err
+	}
+
+	logging.FromContext(ctx).Infof("Retrying installation with audit blocking disabled")
+	return nil
+}
+
+// runComposerInstall installs the project dependencies. phpVersion selects the
+// Docker image PHP version for Docker installs; phpBinary selects the local
+// PHP executable for non-Docker installs (falling back to PHP_BINARY and the
+// plain composer binary when empty). When Composer is not installed, a copy
+// of the Composer PHAR is downloaded and used instead.
+func runComposerInstall(ctx context.Context, projectFolder string, useDocker bool, showSpinner bool, phpVersion string, phpBinary string) (string, error) {
+	var cmdInstall *exec.Cmd
+
+	if useDocker && !system.IsInsideContainer() {
+		absProjectFolder, err := filepath.Abs(projectFolder)
+		if err != nil {
+			return "", err
+		}
+
+		dockerArgs := []string{"run",
+			"--rm",
+			"--pull=always",
+			"-v", absProjectFolder + ":/app",
+			"-w", "/app"}
+
+		dockerArgs = append(dockerArgs, system.DockerRunUserArgs(absProjectFolder)...)
+
+		if system.IsDockerMountable() {
+			homeDir, err := os.UserHomeDir()
+			if err == nil {
+				composerDir := filepath.Join(homeDir, ".composer")
+				_ = os.MkdirAll(composerDir, 0o755)
+				dockerArgs = append(dockerArgs, "-v", composerDir+":/tmp/composer/")
+			}
+		}
+
+		if phpVersion == "" {
+			phpVersion = shop.SupportedPHPVersions[len(shop.SupportedPHPVersions)-1]
+		}
+		dockerArgs = append(dockerArgs,
+			fmt.Sprintf("ghcr.io/shopwell-shop/docker-dev:php%s-node24-caddy", phpVersion),
+			"composer", "install", "--no-interaction")
+
+		cmdInstall = exec.CommandContext(ctx, "docker", dockerArgs...)
+	} else {
+		composerBinary, isPhar, err := system.ResolveComposer(ctx)
+		if err != nil {
+			return "", err
+		}
+
+		if phpBinary == "" {
+			phpBinary = os.Getenv("PHP_BINARY")
+		}
+
+		switch {
+		case phpBinary != "":
+			cmdInstall = exec.CommandContext(ctx, phpBinary, composerBinary, "install", "--no-interaction")
+		case isPhar:
+			cmdInstall = exec.CommandContext(ctx, "php", composerBinary, "install", "--no-interaction")
+		default:
+			cmdInstall = exec.CommandContext(ctx, "composer", "install", "--no-interaction")
+		}
+
+		cmdInstall.Dir = projectFolder
+	}
+
+	var output bytes.Buffer
+
+	if !showSpinner {
+		cmdInstall.Stdin = os.Stdin
+		cmdInstall.Stdout = io.MultiWriter(os.Stdout, &output)
+		cmdInstall.Stderr = io.MultiWriter(os.Stderr, &output)
+
+		err := cmdInstall.Run()
+		return output.String(), err
+	}
+
+	cmdInstall.Stdout = &output
+	cmdInstall.Stderr = &output
+
+	err := tui.RunSpinnerWithLogs(ctx, "Installing dependencies", cmdInstall)
+	return output.String(), err
+}

@@ -1,0 +1,983 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/shopwell-shop/shopwell-cli/internal/shop/config",
+  "$ref": "#/$defs/Config",
+  "$defs": {
+    "Config": {
+      "properties": {
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "url": {
+          "type": "string",
+          "description": "Shop URL. Prefer environments.local.url or another named environment; the top-level url key is used only when environments.local is absent."
+        },
+        "compatibility_date": {
+          "type": "string",
+          "format": "date",
+          "description": "Controls date-based compatibility behavior, formatted as YYYY-MM-DD."
+        },
+        "php_version": {
+          "type": "string",
+          "description": "PHP version (e.g. \"8.3\") used for local PHP and Composer commands of this project. Written by \"project create\" for non-Docker projects. The matching PHP is looked up on the machine running the command, so the value stays portable across machines; it takes precedence over the php found in PATH, while the PHP_BINARY environment variable overrides it."
+        },
+        "build": {
+          "$ref": "#/$defs/ConfigBuild"
+        },
+        "admin_api": {
+          "$ref": "#/$defs/ConfigAdminApi",
+          "description": "Admin API credentials. Prefer environments.local.admin_api or another named environment; the top-level admin_api key is used only when environments.local is absent."
+        },
+        "dump": {
+          "$ref": "#/$defs/ConfigDump"
+        },
+        "deployment": {
+          "$ref": "#/$defs/ConfigDeployment"
+        },
+        "validation": {
+          "$ref": "#/$defs/ConfigValidation"
+        },
+        "image_proxy": {
+          "$ref": "#/$defs/ConfigImageProxy"
+        },
+        "docker": {
+          "$ref": "#/$defs/ConfigDocker",
+          "description": "Docker dev environment configuration"
+        },
+        "environments": {
+          "additionalProperties": {
+            "$ref": "#/$defs/EnvironmentConfig"
+          },
+          "type": "object",
+          "description": "Named shop targets. Empty -e selects environments.local. Store url and admin_api here rather than at the top level."
+        },
+        "disable_composer_scripts": {
+          "type": "boolean",
+          "description": "When enabled, composer scripts will be disabled during CI builds"
+        },
+        "disable_composer_install": {
+          "type": "boolean",
+          "description": "When enabled, composer install will be skipped during CI builds"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigAdminApi": {
+      "properties": {
+        "client_id": {
+          "type": "string",
+          "description": "Client ID of integration"
+        },
+        "client_secret": {
+          "type": "string",
+          "description": "Client Secret of integration"
+        },
+        "username": {
+          "type": "string",
+          "description": "Username of admin user"
+        },
+        "password": {
+          "type": "string",
+          "description": "Password of admin user"
+        },
+        "disable_ssl_check": {
+          "type": "boolean",
+          "description": "Disable SSL certificate check"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigBuild": {
+      "properties": {
+        "disable_asset_copy": {
+          "type": "boolean",
+          "description": "When enabled, the assets will not be copied to the public folder"
+        },
+        "remove_extension_assets": {
+          "type": "boolean",
+          "description": "When enabled, the assets of extensions will be removed from the extension public folder. (Requires Shopwell 6.5.2.0)"
+        },
+        "keep_extension_source": {
+          "type": "boolean",
+          "description": "When enabled, the extensions source code will be keep in the final build"
+        },
+        "keep_source_maps": {
+          "type": "boolean",
+          "description": "When enabled, the source maps will not be removed from the final build"
+        },
+        "cleanup_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Paths to delete for the final build"
+        },
+        "browserslist": {
+          "type": "string",
+          "description": "Browserslist configuration for the Storefront build"
+        },
+        "exclude_extensions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Extensions to exclude from the build"
+        },
+        "disable_storefront_build": {
+          "type": "boolean",
+          "description": "When enabled, the storefront build will be skipped"
+        },
+        "disable_checksums": {
+          "type": "boolean",
+          "description": "When enabled, the checksum.json generation for extensions will be skipped"
+        },
+        "keep_existing_checksums": {
+          "type": "boolean",
+          "description": "When enabled, an already existing checksum.json in an extension will be kept instead of being overwritten"
+        },
+        "force_extension_build": {
+          "items": {
+            "$ref": "#/$defs/ConfigBuildExtension"
+          },
+          "type": "array",
+          "description": "Extensions to force build for, even if they have compiled files"
+        },
+        "force_admin_build": {
+          "type": "boolean",
+          "description": "When enabled, the shopwell admin will be built"
+        },
+        "keep_node_modules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Keep following node_modules in the final build"
+        },
+        "mjml": {
+          "$ref": "#/$defs/ConfigBuildMJML",
+          "description": "MJML email template compilation configuration"
+        },
+        "asset_caching": {
+          "type": "boolean",
+          "description": "When enabled, built assets are cached and restored on subsequent builds when sources haven't changed"
+        },
+        "hooks": {
+          "$ref": "#/$defs/ConfigBuildHooks",
+          "description": "Hooks to run at specific points during CI builds"
+        },
+        "bundles": {
+          "items": {
+            "$ref": "#/$defs/ConfigProjectBundle"
+          },
+          "type": "array",
+          "description": "Shopwell bundles to include in builds (alternative to composer.json extra.shopwell-bundles)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigBuildExtension": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the extension"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "ConfigBuildExtension defines the configuration for forcing extension builds."
+    },
+    "ConfigBuildHooks": {
+      "properties": {
+        "pre": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands to run before anything runs"
+        },
+        "post": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands to run after everything completes"
+        },
+        "pre-composer": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands to run before composer install"
+        },
+        "post-composer": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands to run after composer install"
+        },
+        "pre-assets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands to run before asset build"
+        },
+        "post-assets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Commands to run after asset build"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConfigBuildHooks defines hooks to run at specific points during CI builds."
+    },
+    "ConfigBuildMJML": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to enable MJML compilation"
+        },
+        "search_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Directories to search for MJML files"
+        },
+        "allow_includes": {
+          "type": "boolean",
+          "description": "When enabled, mj-include directives in MJML templates are processed.\nMJML 5 ignores mj-include by default for security reasons; set this to\ntrue to opt back in. Each search_path is automatically added to the\nmj-include allowlist for files compiled inside it, so templates can\ninclude siblings under the same search_path (e.g. a shared _includes/\nfolder) without further configuration."
+        },
+        "include_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Extra directories outside any search_path that mj-include is allowed to\nread from. Relative paths are resolved against the project root.\nAbsolute paths are used as-is. Most projects do not need this — set it\nonly when partials live outside the search_path tree. Implies\nallow_includes."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConfigBuildMJML defines the configuration for MJML email template compilation."
+    },
+    "ConfigDeployment": {
+      "properties": {
+        "hooks": {
+          "properties": {
+            "pre": {
+              "$ref": "#/$defs/ConfigDeploymentHook"
+            },
+            "post": {
+              "$ref": "#/$defs/ConfigDeploymentHook"
+            },
+            "pre-install": {
+              "$ref": "#/$defs/ConfigDeploymentHook"
+            },
+            "post-install": {
+              "$ref": "#/$defs/ConfigDeploymentHook"
+            },
+            "post-extension-on-project-install": {
+              "$ref": "#/$defs/ConfigDeploymentHook"
+            },
+            "pre-update": {
+              "$ref": "#/$defs/ConfigDeploymentHook"
+            },
+            "post-update": {
+              "$ref": "#/$defs/ConfigDeploymentHook"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "store": {
+          "properties": {
+            "license-domain": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "cache": {
+          "properties": {
+            "always_clear": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "extension-management": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "exclude": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "overrides": {
+              "$ref": "#/$defs/ConfigDeploymentOverrides"
+            },
+            "force_updates": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "force-update": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "The extension management of the deployment"
+        },
+        "one-time-tasks": {
+          "items": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "script": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "id",
+              "script"
+            ]
+          },
+          "type": "array"
+        },
+        "staging": {
+          "$ref": "#/$defs/ConfigDeploymentStaging",
+          "description": "Staging mode configuration for the deployment"
+        },
+        "opensearch": {
+          "$ref": "#/$defs/ConfigDeploymentOpenSearch",
+          "description": "OpenSearch configuration for the deployment."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigDeploymentHook": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "description": "An optional title shown in the deployment output for this step"
+                  },
+                  "script": {
+                    "type": "string",
+                    "description": "The script that is executed for this step"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "script"
+                ]
+              }
+            ]
+          },
+          "type": "array"
+        }
+      ],
+      "description": "Either a single script or a list of steps (a script string or a {title, script} object) executed individually"
+    },
+    "ConfigDeploymentOpenSearch": {
+      "properties": {
+        "index-on-install": {
+          "type": "boolean",
+          "description": "When enabled, OpenSearch indexes are created after a fresh installation."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConfigDeploymentOpenSearch defines OpenSearch actions during deployment."
+    },
+    "ConfigDeploymentOverrides": {
+      "additionalProperties": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "inactive",
+              "remove",
+              "ignore",
+              "installed"
+            ]
+          },
+          "keepUserData": {
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state"
+        ]
+      },
+      "type": "object",
+      "title": "Extension overrides"
+    },
+    "ConfigDeploymentStaging": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When enabled, staging setup commands will be executed during installation and upgrade"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConfigDeploymentStaging defines staging mode configuration."
+    },
+    "ConfigDocker": {
+      "properties": {
+        "php": {
+          "$ref": "#/$defs/ConfigDockerPHP",
+          "description": "PHP configuration for the Docker dev image"
+        },
+        "services": {
+          "$ref": "#/$defs/ConfigDockerServices",
+          "description": "Per-service settings for the Docker dev environment: host port overrides and implementation variants."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigDockerPHP": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "profiler": {
+                "const": "blackfire"
+              }
+            },
+            "required": [
+              "profiler"
+            ]
+          },
+          "then": {
+            "required": [
+              "blackfire_server_id",
+              "blackfire_server_token"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "profiler": {
+                "const": "tideways"
+              }
+            },
+            "required": [
+              "profiler"
+            ]
+          },
+          "then": {
+            "required": [
+              "tideways_api_key"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "PHP version (e.g. \"8.3\", \"8.2\"). Defaults to \"8.3\"."
+        },
+        "profiler": {
+          "type": "string",
+          "enum": [
+            "xdebug",
+            "blackfire",
+            "tideways",
+            "pcov",
+            "spx"
+          ],
+          "description": "Profiler to enable. Possible values: xdebug, blackfire, tideways, pcov, spx."
+        },
+        "blackfire_server_id": {
+          "type": "string",
+          "description": "Blackfire server ID from your Blackfire account. Required when profiler is \"blackfire\"."
+        },
+        "blackfire_server_token": {
+          "type": "string",
+          "description": "Blackfire server token from your Blackfire account. Required when profiler is \"blackfire\"."
+        },
+        "tideways_api_key": {
+          "type": "string",
+          "description": "Tideways API key from your Tideways account. Required when profiler is \"tideways\"."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigDockerServices": {
+      "properties": {
+        "web": {
+          "properties": {
+            "ports": {
+              "properties": {
+                "http": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Shop (Caddy). Defaults to 8000."
+                },
+                "http_alt": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Shop (alternative HTTP). Defaults to 8080."
+                },
+                "storefront_watcher_assets": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Storefront watcher assets. Defaults to 9999."
+                },
+                "storefront_watcher": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Storefront watcher. Defaults to 9998."
+                },
+                "admin_watcher": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Admin watcher (Vite). Defaults to 5173."
+                },
+                "admin_watcher_hmr": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Admin watcher HMR. Defaults to 5773."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "Host ports the service's endpoints are published on. false disables publishing an endpoint."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "Shop service settings."
+        },
+        "database": {
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "mariadb",
+                "mysql"
+              ],
+              "description": "Implementation to run. Defaults to \"mariadb\"."
+            },
+            "version": {
+              "type": "string",
+              "description": "Image version (tag) to run. Defaults to \"11.8\" for mariadb, \"8.4\" for mysql."
+            },
+            "ports": {
+              "properties": {
+                "mysql": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Database (MySQL protocol). Published on a random port by default."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "Host ports the service's endpoints are published on. false disables publishing an endpoint."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "Database service settings."
+        },
+        "adminer": {
+          "properties": {
+            "ports": {
+              "properties": {
+                "http": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Adminer. Defaults to 9080."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "Host ports the service's endpoints are published on. false disables publishing an endpoint."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "Adminer service settings."
+        },
+        "mailer": {
+          "properties": {
+            "ports": {
+              "properties": {
+                "smtp": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Mailpit SMTP. Defaults to 1025."
+                },
+                "http": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Mailpit UI. Defaults to 8025."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "Host ports the service's endpoints are published on. false disables publishing an endpoint."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "Mailpit service settings."
+        },
+        "queue": {
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "lavinmq",
+                "rabbitmq"
+              ],
+              "description": "Implementation to run. Defaults to \"lavinmq\"."
+            },
+            "version": {
+              "type": "string",
+              "description": "Image version (tag) to run. Defaults to \"latest\" for lavinmq, \"4-management\" for rabbitmq."
+            },
+            "ports": {
+              "properties": {
+                "management": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Queue management UI. Defaults to 15672."
+                },
+                "amqp": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for AMQP. Defaults to 5672."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "Host ports the service's endpoints are published on. false disables publishing an endpoint."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "Queue service settings."
+        },
+        "search": {
+          "properties": {
+            "ports": {
+              "properties": {
+                "http": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for OpenSearch. Defaults to 9200."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "Host ports the service's endpoints are published on. false disables publishing an endpoint."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "Search service settings."
+        },
+        "storage": {
+          "properties": {
+            "ports": {
+              "properties": {
+                "s3": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for S3 API. Defaults to 9000."
+                },
+                "console": {
+                  "$ref": "#/$defs/Port",
+                  "description": "Host port for Storage console. Defaults to 9001."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "Host ports the service's endpoints are published on. false disables publishing an endpoint."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "description": "Storage (S3) service settings."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConfigDockerServices holds the per-service settings of the Docker dev environment, keyed by compose service name."
+    },
+    "ConfigDump": {
+      "properties": {
+        "rewrite": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "object",
+          "description": "Allows to rewrite single columns, perfect for GDPR compliance"
+        },
+        "nodata": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Only export the schema of these tables, supports glob wildcards (e.g. \"customer*\")"
+        },
+        "ignore": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Ignore these tables from export, supports glob wildcards (e.g. \"customer*\")"
+        },
+        "where": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Add an where condition to that table, schema is table name as key, and where statement as value"
+        },
+        "limit": {
+          "additionalProperties": {
+            "$ref": "#/$defs/TableLimit"
+          },
+          "type": "object",
+          "description": "Limit the amount of exported rows of a table, schema is table name as key. All tables referencing the limited table via foreign keys (also transitively) are filtered automatically, so they only contain rows belonging to the kept rows. A second limit on a table that is already filtered this way is rejected. When the limited table references itself (e.g. product.parent_id), the ancestors of the kept rows are exported too, so the dump stays importable. Requires the CREATE and DROP privileges to freeze the kept rows into staging tables"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigImageProxy": {
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The URL of the upstream server to proxy requests to when files are not found locally"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigProjectBundle": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path from project root to the bundle directory"
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional override for the bundle name; defaults to the directory basename"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "description": "ConfigProjectBundle defines a project-level Shopwell bundle."
+    },
+    "ConfigValidation": {
+      "properties": {
+        "ignore": {
+          "items": {
+            "$ref": "#/$defs/ConfigValidationIgnoreItem"
+          },
+          "type": "array",
+          "description": "Ignore items from the validation."
+        },
+        "ignore_extensions": {
+          "items": {
+            "$ref": "#/$defs/ConfigValidationIgnoreExtension"
+          },
+          "type": "array"
+        },
+        "php_version": {
+          "type": "string",
+          "description": "PhpVersion overrides the PHP version used for linting (e.g. \"8.4\").\nWhen set, this takes precedence over the version derived from composer.json or the static Shopwell-to-PHP mapping."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConfigValidation is used to configure the project validation."
+    },
+    "ConfigValidationIgnoreExtension": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the extension to ignore."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ConfigValidationIgnoreItem": {
+      "properties": {
+        "identifier": {
+          "type": "string",
+          "description": "The identifier of the item to ignore."
+        },
+        "path": {
+          "type": "string",
+          "description": "The path of the item to ignore."
+        },
+        "message": {
+          "type": "string",
+          "description": "The message of the item to ignore."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConfigValidationIgnoreItem is used to ignore items from the validation."
+    },
+    "EnvironmentConfig": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "local",
+            "docker",
+            "ssh"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "description": "Shop URL for this named environment"
+        },
+        "admin_api": {
+          "$ref": "#/$defs/ConfigAdminApi",
+          "description": "Admin API credentials for this named environment"
+        },
+        "ssh": {
+          "$ref": "#/$defs/EnvironmentSSHConfig",
+          "description": "SSH target of this named environment (type \"ssh\"): a Shopwell project on a remote host reachable over SSH. Commands run through a multiplexed SSH connection, and the database is tunneled through it automatically."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "EnvironmentSSHConfig": {
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "SSH host name or IP address"
+        },
+        "user": {
+          "type": "string",
+          "description": "SSH user. Defaults to the user configured in ~/.ssh/config or the current user"
+        },
+        "port": {
+          "type": "integer",
+          "description": "SSH port. Defaults to 22"
+        },
+        "directory": {
+          "type": "string",
+          "description": "Absolute path of the Shopwell project root on the remote host"
+        },
+        "identity_file": {
+          "type": "string",
+          "description": "Path to the SSH private key file. Defaults to the ssh agent or the default key files"
+        },
+        "php_binary": {
+          "type": "string",
+          "description": "PHP binary used for PHP and console commands on the remote host (e.g. \"/usr/bin/php8.3\"). Defaults to \"php\""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host",
+        "directory"
+      ]
+    },
+    "Port": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1
+        },
+        {
+          "const": false
+        }
+      ],
+      "description": "Host port number, or false to not publish the port."
+    },
+    "Ports": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Port"
+      },
+      "type": "object",
+      "description": "Ports maps a service's endpoint name to the host port it binds, or to PortDisabled to not publish the endpoint at all."
+    },
+    "ServiceSettings": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Implementation to run, for services that offer more than one (database: mariadb or mysql, queue: lavinmq or rabbitmq)."
+        },
+        "version": {
+          "type": "string",
+          "description": "Image version (tag) to run. Defaults per implementation."
+        },
+        "ports": {
+          "$ref": "#/$defs/Ports",
+          "description": "Host ports the service's endpoints are published on, keyed by endpoint name. false disables publishing an endpoint."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ServiceSettings configures one compose service of the dev environment."
+    },
+    "TableLimit": {
+      "properties": {
+        "rows": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum amount of rows to export for this table"
+        },
+        "order_by": {
+          "type": "string",
+          "description": "SQL ORDER BY clause deciding which rows are kept (e.g. \"created_at DESC\" for the newest rows). Defaults to \"created_at DESC\" when the table has a created_at column"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "rows"
+      ],
+      "description": "TableLimit restricts how many rows of a table are dumped."
+    }
+  }
+}

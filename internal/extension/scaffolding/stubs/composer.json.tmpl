@@ -1,0 +1,27 @@
+{
+    "name": "{{ .ComposerName }}",
+    "description": "{{ .ComposerName }}",
+    "type": "shopwell-platform-plugin",
+    "version": "0.1.0",
+    "license": "proprietary",
+    "require": {
+        "shopwell/core": ">=6.7.13.0"
+    },
+    "extra": {
+        "shopwell-plugin-class": "{{ jsonEscape .Namespace }}\\{{ .ClassName }}",
+        "label": {
+            "de-DE": "{{ .ClassName }}",
+            "en-GB": "{{ .ClassName }}"
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "{{ jsonEscape .Namespace }}\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "{{ jsonEscape .Namespace }}\\Tests\\": "tests/"
+        }
+    }
+}

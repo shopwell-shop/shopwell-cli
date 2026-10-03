@@ -1,0 +1,227 @@
+# Agent Skills
+
+Shopwell CLI publishes Agent Skills for AI coding tools.
+
+The canonical skills live in this repository so that changes to Shopwell CLI and
+changes to its agent guidance can be reviewed and released together.
+
+## Repository structure
+
+```text
+shopwell-cli/
+├── AGENTS.md
+├── docs/
+│   └── AGENT_SKILLS.md
+└── skills/
+    ├── shopwell-cli/
+    │   └── SKILL.md
+    ├── shopwell-cli-docker/
+    │   └── SKILL.md
+    └── shopwell-cli-extension-store/
+        └── SKILL.md
+```
+
+Each skill is a single `SKILL.md`, optionally with a `scripts/` directory for
+helper scripts the agent executes (the Agent Skills layout). Keep reference
+material inside `SKILL.md` itself.
+
+Do not maintain separate Claude, Cursor, Codex, Copilot, or other
+client-specific copies in this repository.
+
+## Available skills
+
+### `shopwell-cli`
+
+General Shopwell CLI guidance.
+
+It teaches agents how to:
+
+- discover the current CLI command surface;
+- prefer Shopwell CLI abstractions over lower-level tooling;
+- distinguish project, extension, and account workflows;
+- reason about command safety and side effects;
+- work non-interactively;
+- troubleshoot CLI failures.
+
+### `shopwell-cli-docker`
+
+Guidance for Shopwell CLI projects using Docker.
+
+It teaches agents to let Shopwell CLI resolve the project environment instead
+of defaulting to raw Docker commands.
+
+In particular, Symfony Console commands should normally go through:
+
+```bash
+shopwell-cli project console <command>
+```
+
+and development environment lifecycle through:
+
+```bash
+shopwell-cli project dev
+shopwell-cli project dev start
+shopwell-cli project dev status
+shopwell-cli project dev stop
+```
+
+### `shopwell-cli-extension-store`
+
+Read-only Shopwell Store readiness assessment for an extension.
+
+It teaches agents to:
+
+- collect evidence by calling the CLI directly — two `extension validate` runs
+  (normal and `--store-compliance`) plus reading the extension's metadata and icon;
+- classify every finding against a fixed table with a re-checkable source;
+- keep local file state separate from the remote Store listing, which it never
+  inspects;
+- never modify files.
+
+## Source of truth
+
+The files under `skills/` are the canonical source.
+
+Do not duplicate their content in generated client-specific files.
+
+The skills should contain durable workflow knowledge rather than an exhaustive
+copy of the command reference. Agents are instructed to inspect the current
+CLI with `--help`, which reduces the amount of guidance that needs updating
+when commands or flags are added.
+
+## Pull request checklist
+
+For user-facing Shopwell CLI changes:
+
+1. Implement the CLI change.
+2. Check whether `skills/shopwell-cli/SKILL.md` is affected.
+3. Check whether `skills/shopwell-cli-docker/SKILL.md` or `skills/shopwell-cli-extension-store/SKILL.md` is affected.
+4. Update the skill in the same PR when required.
+5. Validate the skills.
+6. Verify that the skills can still be discovered by the skills CLI.
+
+Consider adding the following item to the repository PR template:
+
+```text
+- [ ] I reviewed `skills/` for user-facing CLI changes.
+```
+
+## Validation
+
+Validate each skill against the Agent Skills format:
+
+```bash
+skills-ref validate ./skills/shopwell-cli
+skills-ref validate ./skills/shopwell-cli-docker
+skills-ref validate ./skills/shopwell-cli-extension-store
+```
+
+Verify repository discovery:
+
+```bash
+npx skills add . --list
+```
+
+CI should run these checks so an invalid skill cannot be merged.
+
+Where practical, CI should also test commands explicitly referenced by the
+skills, such as:
+
+```text
+project console
+project dev
+project dev start
+project dev status
+project dev stop
+project dump
+```
+
+This catches obvious drift when commands are renamed or removed.
+
+Semantic changes still require human review.
+
+## Distribution
+
+The canonical Agent Skills are maintained under `skills/` in this repository.
+
+They are distributed through the Agent Skills ecosystem directly from the
+`shopwell-shop/shopwell-cli` GitHub repository. Do not maintain client-specific
+copies of the skills.
+
+After merging changes to the default branch, verify public discovery:
+
+```bash
+npx skills add shopwell-shop/shopwell-cli --list
+```
+
+The `skills` CLI is responsible for installing the canonical skills for
+supported AI clients. Shopwell CLI does not maintain client-specific copies.
+
+## Updating installed skills
+
+The canonical source changes whenever `skills/` changes on the default branch.
+
+Users can check installed skills for available updates with:
+
+```bash
+npx skills check
+```
+
+Update the Shopwell skills with:
+
+```bash
+npx skills update shopwell-cli shopwell-cli-docker shopwell-cli-extension-store
+```
+
+or update all installed project skills with:
+
+```bash
+npx skills update -y
+```
+
+Updating the Shopwell CLI binary does not automatically modify skills installed
+by external Agent Skills tooling.
+
+## Keeping the skills current
+
+Agent Skills are part of the user-facing Shopwell CLI contract.
+
+Every pull request that changes user-facing CLI behavior must review `skills/`
+for impact.
+
+Review the skills when changing:
+
+- command names or hierarchy;
+- important execution modes;
+- environment or Docker behavior;
+- recommended workflows;
+- destructive or state-changing behavior;
+- commands explicitly referenced in a skill.
+
+Do not turn the skills into a duplicate command reference. The running CLI and
+its `--help` output remain authoritative for exact commands, flags, and
+version-specific behavior.
+
+Where possible, CI should verify that commands explicitly referenced by the
+skills continue to exist.
+
+## Versioning
+
+Skills do not have an independent Shopwell version.
+
+Because their canonical source lives in the Shopwell CLI repository, every Git
+tag and Shopwell CLI release records the exact skill source that existed for
+that release.
+
+The default branch contains the latest maintained guidance.
+
+## Future signed distribution
+
+If Shopwell later requires cryptographically verified, pinned, or offline skill
+distribution, the canonical `skills/` directory may additionally be published
+as a signed OCI artifact.
+
+This must remain a second distribution of the same canonical source, not a
+separate copy of the skills.
+
+Until such a requirement exists, the `skills` CLI and skills.sh ecosystem are the preferred cross-client distribution and update mechanism.

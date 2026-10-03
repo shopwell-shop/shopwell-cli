@@ -1,0 +1,102 @@
+package project
+
+import (
+	"errors"
+
+	"github.com/spf13/cobra"
+
+	adminSdk "github.com/shopwell-shop/shopwell-cli/internal/admin-api"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+var projectExtensionUpdateCmd = &cobra.Command{
+	Use:   "update name...|all",
+	Short: "Update one or more installed extensions",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		projectRoot, err := shop.FindClosestShopwellProject(true)
+		if err != nil {
+			return err
+		}
+
+		cmdExecutor, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return err
+		}
+
+		client, err := cmdExecutor.AdminAPIClient(cmd.Context())
+		if err != nil {
+			return err
+		}
+
+		disableStoreUpdates, _ := cmd.PersistentFlags().GetBool("disable-store-update")
+
+		if _, err := client.ExtensionManager.Refresh(adminSdk.NewApiContext(cmd.Context())); err != nil {
+			return err
+		}
+
+		extensions, _, err := client.ExtensionManager.ListAvailableExtensions(adminSdk.NewApiContext(cmd.Context()))
+		if err != nil {
+			return err
+		}
+
+		failed := false
+
+		if len(args) == 1 && args[0] == "all" {
+			args = make([]string, 0)
+
+			for _, extension := range extensions {
+				args = append(args, extension.Name)
+			}
+		}
+
+		for _, arg := range args {
+			extension := extensions.GetByName(arg)
+
+			if extension == nil {
+				failed = true
+				logging.FromContext(cmd.Context()).Errorf("Cannot find extension %s, run \"shopwell-cli project extension list\" to see installed extensions", arg)
+				continue
+			}
+
+			if !extension.IsUpdateAble() {
+				logging.FromContext(cmd.Context()).Infof("Extension %s is up to date", arg)
+				continue
+			}
+
+			if !extension.Active {
+				logging.FromContext(cmd.Context()).Infof("Extension %s is not active, skipping", arg)
+				continue
+			}
+
+			if extension.UpdateSource == "store" && !disableStoreUpdates {
+				if _, err := client.ExtensionManager.DownloadExtension(adminSdk.NewApiContext(cmd.Context()), arg); err != nil {
+					logging.FromContext(cmd.Context()).Errorf("Download of %s update failed with error: %v", extension.Name, err)
+					failed = true
+					continue
+				}
+			}
+
+			if _, err := client.ExtensionManager.UpdateExtension(adminSdk.NewApiContext(cmd.Context()), extension.Type, extension.Name); err != nil {
+				failed = true
+
+				logging.FromContext(cmd.Context()).Errorf("Update of %s failed with error: %v", extension.Name, err)
+				continue
+			}
+
+			logging.FromContext(cmd.Context()).Infof("Updated %s", extension.Name)
+		}
+
+		if failed {
+			return errors.New("update failed")
+		}
+
+		return nil
+	},
+}
+
+func init() {
+	projectExtensionCmd.AddCommand(projectExtensionUpdateCmd)
+	projectExtensionUpdateCmd.PersistentFlags().Bool("disable-store-update", false, "Disable downloading updates from store.shopwell.cn")
+}

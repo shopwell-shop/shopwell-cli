@@ -1,0 +1,71 @@
+package project
+
+import (
+	"context"
+	"os"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/envfile"
+	"github.com/shopwell-shop/shopwell-cli/internal/extension"
+	"github.com/shopwell-shop/shopwell-cli/internal/projectbuild"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+)
+
+var projectAdminWatchCmd = &cobra.Command{
+	Use:     "admin-watch [path]",
+	Short:   "Watch Administration assets with live reload",
+	Aliases: []string{"watch-admin"},
+	Args:    cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var projectRoot string
+		var err error
+
+		if len(args) == 1 {
+			projectRoot = args[0]
+		} else if projectRoot, err = shop.FindClosestShopwellProject(false); err != nil {
+			return err
+		}
+
+		if err := envfile.LoadSymfonyEnvFile(projectRoot); err != nil {
+			return err
+		}
+
+		actualProjectConfigPath := shop.SearchConfigPath(cmd.Context(), projectRoot, projectConfigPath)
+		shopCfg, err := shop.ReadConfig(cmd.Context(), actualProjectConfigPath, projectConfigPath == "")
+		if err != nil {
+			return err
+		}
+
+		cmdExecutor, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return err
+		}
+
+		if err := filterAndWritePluginJson(cmd, projectRoot, shopCfg, cmdExecutor); err != nil {
+			return err
+		}
+
+		watchProcess, err := extension.PrepareAdminWatcher(cmd.Context(), projectRoot, cmdExecutor, os.Stdout)
+		if err != nil {
+			return err
+		}
+
+		runErr := projectbuild.RunCommand(watchProcess)
+
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stopCancel()
+		_ = watchProcess.Stop(stopCtx)
+
+		return runErr
+	},
+}
+
+func init() {
+	projectRootCmd.AddCommand(projectAdminWatchCmd)
+	projectAdminWatchCmd.PersistentFlags().String("only-extensions", "", "Watch only the specified extensions (comma-separated)")
+	projectAdminWatchCmd.PersistentFlags().Bool("select-extensions", false, "Select extensions interactively")
+	projectAdminWatchCmd.PersistentFlags().String("skip-extensions", "", "Skip the specified extensions (comma-separated)")
+	projectAdminWatchCmd.PersistentFlags().Bool("only-custom-static-extensions", false, "Watch only extensions in the custom/static-plugins directory")
+}

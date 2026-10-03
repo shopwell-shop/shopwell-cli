@@ -1,0 +1,153 @@
+package extension
+
+import (
+	"context"
+	"os"
+	"path"
+	"path/filepath"
+	"runtime"
+	"sync"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/executor"
+	"github.com/shopwell-shop/shopwell-cli/internal/npm"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+type npmInstallJob struct {
+	npmPath             string
+	relDir              string
+	additionalNpmParams []string
+	additionalText      string
+}
+
+type npmInstallResult struct {
+	nodeModulesPath string
+	err             error
+}
+
+func InstallNodeModulesOfConfigs(ctx context.Context, cfgs ExtensionAssetConfig, assetConfig AssetBuildConfig) ([]string, error) {
+	// Collect all npm install jobs
+	jobs := make([]npmInstallJob, 0)
+
+	addedJobs := make(map[string]bool)
+
+	// Install shared node_modules between admin and storefront
+	for _, entry := range cfgs {
+		additionalNpmParameters := []string{}
+
+		if entry.NpmStrict {
+			additionalNpmParameters = []string{"--production"}
+		}
+
+		for _, possibleNodePath := range entry.getPossibleNodePaths() {
+			npmPath := path.Dir(possibleNodePath)
+
+			if !assetConfig.NPMForceInstall && npm.NodeModulesExists(npmPath) {
+				continue
+			}
+
+			additionalText := ""
+			if !entry.NpmStrict {
+				additionalText = " (consider enabling npm_strict mode, to install only production relevant dependencies)"
+			}
+
+			if !addedJobs[npmPath] {
+				addedJobs[npmPath] = true
+			} else {
+				continue
+			}
+
+			var relDir string
+			if assetConfig.ShopwellRoot != "" {
+				relDir, _ = filepath.Rel(assetConfig.ShopwellRoot, npmPath)
+			}
+
+			jobs = append(jobs, npmInstallJob{
+				npmPath:             npmPath,
+				relDir:              relDir,
+				additionalNpmParams: additionalNpmParameters,
+				additionalText:      additionalText,
+			})
+		}
+	}
+
+	if len(jobs) == 0 {
+		return []string{}, nil
+	}
+
+	// Set up worker pool with number of CPU cores
+	numWorkers := runtime.NumCPU()
+	jobChan := make(chan npmInstallJob, len(jobs))
+	resultChan := make(chan npmInstallResult, len(jobs))
+
+	// Start workers
+	var wg sync.WaitGroup
+	for range numWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobChan {
+				result := processNpmInstallJob(ctx, assetConfig, job)
+				resultChan <- result
+			}
+		}()
+	}
+
+	// Send jobs to workers
+	for _, job := range jobs {
+		jobChan <- job
+	}
+	close(jobChan)
+
+	// Wait for all workers to finish
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	paths := make([]string, 0)
+	for result := range resultChan {
+		if result.err != nil {
+			return nil, result.err
+		}
+		if result.nodeModulesPath != "" {
+			paths = append(paths, result.nodeModulesPath)
+		}
+	}
+
+	return paths, nil
+}
+
+func processNpmInstallJob(ctx context.Context, assetConfig AssetBuildConfig, job npmInstallJob) npmInstallResult {
+	npmPackage, err := npm.ReadPackage(job.npmPath)
+	if err != nil {
+		return npmInstallResult{err: err}
+	}
+
+	logging.FromContext(ctx).Infof("Installing npm dependencies in %s %s\n", job.npmPath, job.additionalText)
+
+	var exec executor.Executor
+	if job.relDir != "" {
+		exec = assetConfig.ExecutorWithRelDir(job.relDir)
+	} else {
+		exec = executor.NewLocal(job.npmPath)
+	}
+
+	if err := npm.InstallDependencies(ctx, exec, npmPackage, job.additionalNpmParams...); err != nil {
+		return npmInstallResult{err: err}
+	}
+
+	return npmInstallResult{
+		nodeModulesPath: path.Join(job.npmPath, "node_modules"),
+	}
+}
+
+func deletePaths(ctx context.Context, nodeModulesPaths ...string) {
+	for _, nodeModulesPath := range nodeModulesPaths {
+		if err := os.RemoveAll(nodeModulesPath); err != nil {
+			logging.FromContext(ctx).Errorf("Failed to remove path %s: %s", nodeModulesPath, err.Error())
+			return
+		}
+	}
+}

@@ -1,0 +1,6 @@
+FROM scratch
+ARG TARGETPLATFORM
+
+COPY $TARGETPLATFORM/shopwell-cli /
+ENTRYPOINT ["/shopwell-cli"]
+CMD ["--help"]

@@ -1,0 +1,78 @@
+package project
+
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop/upgrade"
+	"github.com/shopwell-shop/shopwell-cli/internal/system"
+	upgradetui "github.com/shopwell-shop/shopwell-cli/internal/tui/upgrade"
+)
+
+var projectUpgradeCmd = &cobra.Command{
+	Use:   "upgrade",
+	Short: "Check compatibility and guide a Shopwell upgrade",
+	Long: "Upgrade a local Shopwell project step by step: readiness checks, version selection, extension compatibility, and the guided execution.\n" +
+		"In a terminal this runs as an interactive wizard. With --no-interaction (or without a terminal, e.g. CI) the upgrade runs headless:\n" +
+		"--target is required there, --dry-run stops after the read-only preflight, and --no-audit continues when dependencies are blocked by security advisories.",
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		projectRoot, err := shop.FindClosestShopwellProject(false)
+		if err != nil {
+			return err
+		}
+
+		exec, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return err
+		}
+
+		if !system.IsInteractionEnabled(cmd.Context()) {
+			target, _ := cmd.Flags().GetString("target")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			noAudit, _ := cmd.Flags().GetBool("no-audit")
+
+			return upgrade.NewProjectUpgrader(projectRoot, exec).RunHeadless(cmd.Context(), upgrade.HeadlessOptions{
+				Target:  target,
+				DryRun:  dryRun,
+				NoAudit: noAudit,
+				Out:     cmd.OutOrStdout(),
+			})
+		}
+
+		actualProjectConfigPath := shop.SearchConfigPath(cmd.Context(), projectRoot, projectConfigPath)
+		cfg, err := shop.ReadConfig(cmd.Context(), actualProjectConfigPath, projectConfigPath == "")
+		if err != nil {
+			return err
+		}
+
+		envCfg, err := cfg.ResolveEnvironment(environmentName)
+		if err != nil {
+			return err
+		}
+
+		envName := environmentName
+		if envName == "" {
+			envName = envCfg.Type
+		}
+		if envName == "" {
+			envName = "local"
+		}
+
+		shell := upgradetui.NewApp(cmd.Context(), upgradetui.Options{
+			ProjectRoot: projectRoot,
+			EnvName:     envName,
+			Executor:    exec,
+		})
+
+		_, err = shell.Run()
+		return err
+	},
+}
+
+func init() {
+	projectRootCmd.AddCommand(projectUpgradeCmd)
+	projectUpgradeCmd.Flags().String("target", "", "Version to upgrade to (required with --no-interaction; also accepts 'recommended' or 'latest-patch')")
+	projectUpgradeCmd.Flags().Bool("dry-run", false, "In non-interactive mode, run only the read-only preflight without modifying the project")
+	projectUpgradeCmd.Flags().Bool("no-audit", false, "Continue when dependencies are blocked by known security advisories")
+}

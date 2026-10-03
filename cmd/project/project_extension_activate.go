@@ -1,0 +1,83 @@
+package project
+
+import (
+	"errors"
+
+	"github.com/spf13/cobra"
+
+	adminSdk "github.com/shopwell-shop/shopwell-cli/internal/admin-api"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+var projectExtensionActivateCmd = &cobra.Command{
+	Use:   "activate name...",
+	Short: "Activate one or more installed extensions",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		projectRoot, err := shop.FindClosestShopwellProject(true)
+		if err != nil {
+			return err
+		}
+
+		cmdExecutor, err := resolveExecutor(cmd, projectRoot)
+		if err != nil {
+			return err
+		}
+
+		client, err := cmdExecutor.AdminAPIClient(cmd.Context())
+		if err != nil {
+			return err
+		}
+
+		extensions, _, err := client.ExtensionManager.ListAvailableExtensions(adminSdk.NewApiContext(cmd.Context()))
+		if err != nil {
+			return err
+		}
+
+		failed := false
+
+		for _, arg := range args {
+			extension := extensions.GetByName(arg)
+
+			if extension == nil {
+				failed = true
+				logging.FromContext(cmd.Context()).Errorf("Cannot find extension %s, run \"shopwell-cli project extension list\" to see installed extensions", arg)
+				continue
+			}
+
+			if extension.Active {
+				logging.FromContext(cmd.Context()).Infof("Extension %s is already active", arg)
+				continue
+			}
+
+			if extension.InstalledAt == nil {
+				if _, err := client.ExtensionManager.InstallExtension(adminSdk.NewApiContext(cmd.Context()), extension.Type, extension.Name); err != nil {
+					failed = true
+
+					logging.FromContext(cmd.Context()).Errorf("Installation of %s failed with error: %v", extension.Name, err)
+					continue
+				}
+			}
+
+			if _, err := client.ExtensionManager.ActivateExtension(adminSdk.NewApiContext(cmd.Context()), extension.Type, extension.Name); err != nil {
+				failed = true
+
+				logging.FromContext(cmd.Context()).Errorf("Activation of %s failed with error: %v", extension.Name, err)
+				continue
+			}
+
+			logging.FromContext(cmd.Context()).Infof("Activated %s", extension.Name)
+		}
+
+		if failed {
+			return errors.New("activation failed")
+		}
+
+		return nil
+	},
+}
+
+func init() {
+	projectExtensionCmd.AddCommand(projectExtensionActivateCmd)
+}

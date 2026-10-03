@@ -1,0 +1,72 @@
+package verifier
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path"
+
+	"golang.org/x/sync/errgroup"
+)
+
+var ignoredPaths = `
+Resources/app/administration/.tmp/**
+Resources/app/storefront/dist/**
+Resources/public/**
+Resources/store/**
+Resources/**/vendor/**
+dist/**
+package-lock.json
+`
+
+type Prettier struct{}
+
+func (b Prettier) Name() string {
+	return "prettier"
+}
+
+func (b Prettier) Format(ctx context.Context, config ToolConfig, dryRun bool) error {
+	var gr errgroup.Group
+
+	for _, sourceDirectory := range config.SourceDirectories {
+		sourceDirectory := sourceDirectory
+
+		if err := os.WriteFile(path.Join(sourceDirectory, ".prettierignore"), []byte(ignoredPaths), 0o644); err != nil {
+			return err
+		}
+
+		args := []string{
+			path.Join(config.ToolDirectory, "js", "node_modules", ".bin", "prettier"),
+			"--config",
+			path.Join(config.ToolDirectory, "js", "configs", "prettierrc.js"),
+			".",
+		}
+
+		if !dryRun {
+			args = append(args, "--write")
+		} else {
+			args = append(args, "--check")
+		}
+
+		gr.Go(func() error {
+			cmd := exec.CommandContext(ctx, "node", args...)
+			cmd.Dir = sourceDirectory
+			cmd.Stderr = os.Stderr
+			cmd.Stdout = os.Stdout
+
+			if err := cmd.Run(); err != nil {
+				_ = os.Remove(path.Join(sourceDirectory, ".prettierignore"))
+
+				return err
+			}
+
+			return os.Remove(path.Join(sourceDirectory, ".prettierignore"))
+		})
+	}
+
+	return gr.Wait()
+}
+
+func init() {
+	AddTool(Prettier{})
+}

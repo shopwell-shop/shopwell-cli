@@ -1,0 +1,276 @@
+package extension
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"strings"
+
+	cp "github.com/otiai10/copy"
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/archiver"
+	"github.com/shopwell-shop/shopwell-cli/internal/executor"
+	"github.com/shopwell-shop/shopwell-cli/internal/extension"
+	"github.com/shopwell-shop/shopwell-cli/internal/validation"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+var (
+	disableGit           = false
+	extensionReleaseMode = false
+)
+
+var extensionPackageCmd = &cobra.Command{
+	Use:     "package path [branch]",
+	Short:   "Build a distributable extension ZIP",
+	Long:    "Build a ZIP of an extension. By default, files come from a clean Git checkout of the current tag or branch, so uncommitted changes are not included; use --disable-git to package the working copy. The build runs in a temporary folder and leaves the extension folder unchanged. The ZIP is named <name>-<tag-or-branch>.zip when a tag or branch is available, or <name>.zip otherwise, unless --filename is set.",
+	Aliases: []string{"zip"},
+	Args:    cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.CalledAs() == "zip" {
+			logging.FromContext(cmd.Context()).Warnf("`extension zip` is deprecated, use `extension package` instead")
+		}
+
+		extPath, err := filepath.Abs(args[0])
+		if err != nil {
+			return err
+		}
+
+		var branch string
+		if len(args) == 2 {
+			branch = args[1]
+		}
+
+		ext, err := extension.GetExtensionByFolder(cmd.Context(), extPath)
+		if err != nil {
+			return fmt.Errorf("detect extension type: %w", err)
+		}
+
+		extCfg := ext.GetExtensionConfig()
+
+		name, err := ext.GetName()
+		if err != nil {
+			return fmt.Errorf("get name: %w", err)
+		}
+
+		// Create temp dir
+		tempDir, err := os.MkdirTemp("", "extension")
+		if err != nil {
+			return fmt.Errorf("create temp directory: %w", err)
+		}
+
+		extName, err := ext.GetName()
+		if err != nil {
+			return fmt.Errorf("get extension name: %w", err)
+		}
+
+		extDir := fmt.Sprintf("%s/%s/", tempDir, extName)
+
+		err = os.Mkdir(extDir, 0o755)
+		if err != nil {
+			return fmt.Errorf("create temp directory: %w", err)
+		}
+
+		tempDir += "/"
+
+		defer func(path string) {
+			_ = os.RemoveAll(path)
+		}(tempDir)
+
+		var tag string
+
+		// Extract files using strategy
+		if disableGit {
+			err = cp.Copy(extPath, extDir, copyOptions())
+			if err != nil {
+				return fmt.Errorf("copy files: %w", err)
+			}
+		} else {
+			gitCommit, _ := cmd.Flags().GetString("git-commit")
+
+			tag, err = extension.GitCopyFolder(cmd.Context(), extPath, extDir, gitCommit)
+			if err != nil {
+				return fmt.Errorf("copy via git: %w", err)
+			}
+
+			logging.FromContext(cmd.Context()).Infof("Checking out %s using Git", tag)
+		}
+
+		// User input wins
+		if len(branch) > 0 {
+			tag = branch
+		}
+
+		if extCfg.Build.Zip.Composer.Enabled {
+			if err := executeHooks(cmd.Context(), ext, extCfg.Build.Zip.Composer.BeforeHooks, extDir); err != nil {
+				return fmt.Errorf("before hooks composer: %w", err)
+			}
+
+			if err := extension.PrepareFolderForZipping(cmd.Context(), extDir, ext, extCfg); err != nil {
+				return fmt.Errorf("prepare package: %w", err)
+			}
+
+			if err := executeHooks(cmd.Context(), ext, extCfg.Build.Zip.Composer.AfterHooks, extDir); err != nil {
+				return fmt.Errorf("after hooks composer: %w", err)
+			}
+		}
+		var tempExt extension.Extension
+		if tempExt, err = extension.GetExtensionByFolder(cmd.Context(), extDir); err != nil {
+			return err
+		}
+
+		if extCfg.Build.Zip.Assets.Enabled {
+			if err := executeHooks(cmd.Context(), ext, extCfg.Build.Zip.Assets.BeforeHooks, extDir); err != nil {
+				return fmt.Errorf("before hooks assets: %w", err)
+			}
+
+			shopwellConstraint, err := extension.GetShopwellVersionConstraintForBuild(tempExt)
+			if err != nil {
+				return fmt.Errorf("get shopwell version constraint: %w", err)
+			}
+
+			assetBuildConfig := extension.AssetBuildConfig{
+				EnableAssetCaching: extCfg.Build.Zip.Assets.EnableAssetCaching,
+				CleanupNodeModules: true,
+				ShopwellRoot:       os.Getenv("SHOPWELL_PROJECT_ROOT"),
+				ShopwellVersion:    shopwellConstraint,
+			}
+			if assetBuildConfig.ShopwellRoot != "" {
+				assetBuildConfig.Executor = executor.NewLocal(assetBuildConfig.ShopwellRoot)
+			}
+
+			if err := extension.BuildAssetsForExtensions(cmd.Context(), extension.ConvertExtensionsToSources(cmd.Context(), []extension.Extension{tempExt}), assetBuildConfig); err != nil {
+				return fmt.Errorf("building assets: %w", err)
+			}
+
+			if err := executeHooks(cmd.Context(), ext, extCfg.Build.Zip.Assets.AfterHooks, extDir); err != nil {
+				return fmt.Errorf("after hooks assets: %w", err)
+			}
+		}
+
+		if cmd.Flags().Changed("overwrite-app-backend-secret") {
+			extCfg.Validation.Ignore = append(extCfg.Validation.Ignore, validation.ToolConfigIgnore{Identifier: "metadata.setup"})
+			if err := extCfg.Dump(extDir); err != nil {
+				return fmt.Errorf("dump extension config: %w", err)
+			}
+		}
+
+		// Cleanup not wanted files
+		if err := extension.CleanupExtensionFolder(extDir, extCfg.Build.Zip.Pack.Excludes.Paths); err != nil {
+			return fmt.Errorf("cleanup package: %w", err)
+		}
+
+		if extensionReleaseMode {
+			if err := extension.PrepareExtensionForRelease(cmd.Context(), extPath, extDir, ext); err != nil {
+				return fmt.Errorf("prepare for release: %w", err)
+			}
+		}
+
+		if err := extension.ResizeExtensionIcon(cmd.Context(), tempExt); err != nil {
+			return fmt.Errorf("resize extension icon: %w", err)
+		}
+
+		version := getStringOnStringError(cmd.Flags().GetString("overwrite-version"))
+		if version == "" && cmd.Flags().Changed("use-git-tag-as-version") {
+			version = strings.TrimPrefix(tag, "v")
+		}
+
+		if err := extension.BuildModifier(ext, extDir, extension.BuildModifierConfig{
+			AppBackendUrl:    getStringOnStringError(cmd.Flags().GetString("overwrite-app-backend-url")),
+			AppBackendSecret: getStringOnStringError(cmd.Flags().GetString("overwrite-app-backend-secret")),
+			Version:          version,
+		}); err != nil {
+			return fmt.Errorf("build modifier: %w", err)
+		}
+
+		fileName, _ := cmd.Flags().GetString("filename")
+
+		if len(fileName) == 0 {
+			fileName = fmt.Sprintf("%s-%s.zip", name, tag)
+			if len(tag) == 0 {
+				fileName = name + ".zip"
+			}
+		}
+
+		outputDir, _ := cmd.Flags().GetString("output-directory")
+
+		if len(outputDir) > 0 {
+			if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+				if err := os.MkdirAll(outputDir, 0o755); err != nil {
+					return fmt.Errorf("create output directory: %w", err)
+				}
+			}
+
+			fileName = path.Join(outputDir, fileName)
+		}
+
+		if err := executeHooks(cmd.Context(), ext, extCfg.Build.Zip.Pack.BeforeHooks, extDir); err != nil {
+			return fmt.Errorf("before hooks pack: %w", err)
+		}
+
+		// Generate checksums.json file before creating the zip
+		if err := extension.GenerateChecksumJSON(cmd.Context(), extDir, ext); err != nil {
+			return fmt.Errorf("generate checksum.json: %w", err)
+		}
+
+		if err := archiver.CreateZip(tempDir, fileName); err != nil {
+			return fmt.Errorf("create zip file: %w", err)
+		}
+
+		logging.FromContext(cmd.Context()).Infof("Created file %s", fileName)
+
+		return nil
+	},
+}
+
+func init() {
+	extensionRootCmd.AddCommand(extensionPackageCmd)
+	extensionPackageCmd.Flags().BoolVar(&disableGit, "disable-git", false, "Package the working copy instead of a clean Git checkout (symlinks are skipped)")
+	extensionPackageCmd.Flags().BoolVar(&extensionReleaseMode, "release", false, "Prepare a release build: generate the changelog if enabled and, for apps, remove the secret from manifest.xml")
+	extensionPackageCmd.Flags().String("overwrite-app-backend-url", "", "Replace the scheme and host of the app backend URLs in manifest.xml (apps only)")
+	extensionPackageCmd.Flags().String("overwrite-app-backend-secret", "", "Set the app secret in manifest.xml (apps only)")
+	extensionPackageCmd.Flags().String("overwrite-version", "", "Set the extension version in the package")
+	extensionPackageCmd.Flags().Bool("use-git-tag-as-version", false, "Use the Git tag (without a leading v) as the extension version")
+	extensionPackageCmd.MarkFlagsMutuallyExclusive("use-git-tag-as-version", "disable-git")
+	extensionPackageCmd.MarkFlagsMutuallyExclusive("use-git-tag-as-version", "overwrite-version")
+	extensionPackageCmd.Flags().String("output-directory", "", "Directory for the ZIP file (created if missing)")
+	extensionPackageCmd.Flags().String("git-commit", "", "Git commit hash, tag, or branch to package (default: the current tag or branch)")
+	extensionPackageCmd.Flags().String("filename", "", "Name of the ZIP file (default: <name>-<tag>.zip when tagged, otherwise <name>.zip)")
+}
+
+func getStringOnStringError(val string, _ error) string {
+	return val
+}
+
+func executeHooks(ctx context.Context, ext extension.Extension, hooks []string, extDir string) error {
+	env := []string{
+		"EXTENSION_DIR=" + extDir,
+		"ORIGINAL_EXTENSION_DIR=" + ext.GetPath(),
+	}
+
+	for _, hook := range hooks {
+		hookCmd := exec.CommandContext(ctx, "sh", "-c", hook)
+		hookCmd.Stdout = os.Stdout
+		hookCmd.Stderr = os.Stderr
+		hookCmd.Dir = extDir
+		hookCmd.Env = append(os.Environ(), env...)
+		err := hookCmd.Run()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func copyOptions() cp.Options {
+	return cp.Options{
+		OnSymlink: func(string) cp.SymlinkAction {
+			return cp.Skip
+		},
+	}
+}

@@ -1,0 +1,745 @@
+package validation
+
+import (
+	"bytes"
+	"encoding/json"
+	"encoding/xml"
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestReportingOutputIsDeterministic(t *testing.T) {
+	// Create test results in non-alphabetical order
+	testResults := []CheckResult{
+		{
+			Path:       "z_file.go",
+			Line:       5,
+			Identifier: "test.rule2",
+			Message:    "Second message",
+			Severity:   SeverityError,
+		},
+		{
+			Path:       "a_file.go",
+			Line:       10,
+			Identifier: "test.rule1",
+			Message:    "First message",
+			Severity:   SeverityWarning,
+		},
+		{
+			Path:       "a_file.go",
+			Line:       5,
+			Identifier: "test.rule3",
+			Message:    "Third message",
+			Severity:   SeverityError,
+		},
+		{
+			Path:       "b_file.go",
+			Line:       1,
+			Identifier: "test.rule1",
+			Message:    "Fourth message",
+			Severity:   SeverityWarning,
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	// Test summary report multiple times to ensure deterministic output
+	for range 5 {
+		output := captureOutput(func() {
+			// Ignore the error since we're testing output format, not validation logic
+			_ = doSummaryReport(check, false)
+		})
+
+		// Check that files are sorted alphabetically
+		lines := strings.Split(output, "\n")
+		var fileHeaderLines []string
+		for _, line := range lines {
+			// File headers are lines that contain .go but not indented (no leading spaces)
+			if strings.Contains(line, ".go") && !strings.HasPrefix(line, " ") {
+				fileHeaderLines = append(fileHeaderLines, strings.TrimSpace(line))
+			}
+		}
+
+		assert.Len(t, fileHeaderLines, 3) // 3 files
+		assert.Equal(t, "a_file.go", fileHeaderLines[0])
+		assert.Equal(t, "b_file.go", fileHeaderLines[1])
+		assert.Equal(t, "z_file.go", fileHeaderLines[2])
+	}
+
+	// Test GitHub report multiple times to ensure deterministic output
+	for range 5 {
+		output := captureOutput(func() {
+			_ = doGitHubReport(check, false)
+		})
+
+		// The GitHub reporter now prefixes the summary output before the
+		// annotations. Extract only the annotation lines for ordering checks.
+		var annotationLines []string
+		for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+			if strings.HasPrefix(line, "::error") || strings.HasPrefix(line, "::warning") {
+				annotationLines = append(annotationLines, line)
+			}
+		}
+		assert.Len(t, annotationLines, 4) // 4 results
+
+		// Check that results are sorted by path first, then by line
+		assert.Contains(t, annotationLines[0], "a_file.go")
+		assert.Contains(t, annotationLines[0], "line=5")
+		assert.Contains(t, annotationLines[1], "a_file.go")
+		assert.Contains(t, annotationLines[1], "line=10")
+		assert.Contains(t, annotationLines[2], "b_file.go")
+		assert.Contains(t, annotationLines[2], "line=1")
+		assert.Contains(t, annotationLines[3], "z_file.go")
+		assert.Contains(t, annotationLines[3], "line=5")
+
+		// And the summary header should be present
+		assert.Contains(t, output, "problems")
+	}
+}
+
+func TestMarkdownReportIsDeterministic(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "z_file.go",
+			Line:       5,
+			Identifier: "test.rule2",
+			Message:    "Second message",
+			Severity:   SeverityError,
+		},
+		{
+			Path:       "a_file.go",
+			Line:       10,
+			Identifier: "test.rule1",
+			Message:    "First message",
+			Severity:   SeverityWarning,
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	// Test markdown report multiple times to ensure deterministic output
+	for range 5 {
+		output := captureOutput(func() {
+			_ = doMarkdownReport(check, false)
+		})
+
+		// Check that files are sorted alphabetically
+		lines := strings.Split(output, "\n")
+		var headerLines []string
+		for _, line := range lines {
+			if strings.HasPrefix(line, "## ") {
+				headerLines = append(headerLines, line)
+			}
+		}
+
+		assert.Len(t, headerLines, 2) // 2 files
+		assert.Contains(t, headerLines[0], "a_file.go")
+		assert.Contains(t, headerLines[1], "z_file.go")
+	}
+}
+
+func TestErrorExistsSummary(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "z_file.go",
+			Line:       5,
+			Identifier: "test.rule2",
+			Message:    "Second message",
+			Severity:   SeverityError,
+		},
+		{
+			Path:       "a_file.go",
+			Line:       10,
+			Identifier: "test.rule1",
+			Message:    "First message",
+			Severity:   SeverityWarning,
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	assert.Error(t, DoCheckReport(check, "summary", false))
+}
+
+func TestToolInvocationReports(t *testing.T) {
+	check := &testCheck{Results: []CheckResult{}}
+	tools := []ToolInvocationStatus{
+		{Name: "eslint", Status: "skipped", Reason: "no JavaScript source files"},
+		{Name: "storefront-twig", Status: "skipped", Reason: "no storefront Twig templates"},
+	}
+	rows := toolInvocationRows(tools)
+	assert.Contains(t, rows[0], "eslint")
+	assert.Contains(t, rows[0], "  skipped  no JavaScript source files")
+	assert.NotContains(t, rows[0], "(")
+
+	summary := captureOutput(func() {
+		assert.NoError(t, DoCheckReport(check, "summary", false, tools...))
+	})
+	for _, row := range rows {
+		assert.Contains(t, summary, "  "+row)
+	}
+	assert.Contains(t, summary, "Checkers:")
+	assert.True(t, strings.HasPrefix(summary, "\nCheckers:\n"))
+	assert.Less(t, strings.Index(summary, "Checkers:"), strings.Index(summary, "No checkers invoked;"))
+	assert.Contains(t, summary, "No checkers invoked; 0 problems reported")
+	assert.NotContains(t, summary, "No problems found")
+
+	github := captureOutput(func() {
+		assert.NoError(t, DoCheckReport(check, "github", false, tools...))
+	})
+	for _, row := range rows {
+		assert.Contains(t, github, "  "+row)
+	}
+
+	markdown := captureOutput(func() {
+		assert.NoError(t, DoCheckReport(check, "markdown", false, tools...))
+	})
+	assert.Contains(t, markdown, "## Checkers")
+	assert.Less(t, strings.Index(markdown, "## Checkers"), strings.Index(markdown, "No checkers invoked;"))
+	for _, row := range rows {
+		assert.Contains(t, markdown, row)
+	}
+	assert.Contains(t, markdown, "No checkers invoked; 0 problems reported")
+
+	jsonOutput := captureOutput(func() {
+		assert.NoError(t, DoCheckReport(check, "json", false, tools...))
+	})
+	var report struct {
+		Results []CheckResult          `json:"results"`
+		Tools   []ToolInvocationStatus `json:"tools"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(jsonOutput), &report))
+	assert.Empty(t, report.Results)
+	assert.Equal(t, tools, report.Tools)
+	assert.NotContains(t, jsonOutput, `"checks"`)
+
+	tools[0] = ToolInvocationStatus{Name: "eslint", Status: "invoked"}
+	summary = captureOutput(func() {
+		assert.NoError(t, DoCheckReport(check, "summary", false, tools...))
+	})
+	assert.Contains(t, summary, "eslint")
+	assert.Contains(t, summary, "  invoked")
+	assert.Contains(t, summary, "No problems found")
+}
+
+func TestExecutionErrorDoesNotReportSuccess(t *testing.T) {
+	tools := []ToolInvocationStatus{{Name: "phpstan", Status: "invoked"}}
+	for _, format := range []string{"summary", "github", "markdown"} {
+		t.Run(format, func(t *testing.T) {
+			success := captureOutput(func() {
+				assert.NoError(t, DoCheckReport(&testCheck{}, format, false, tools...))
+			})
+			assert.Contains(t, success, "No problems found")
+
+			for _, results := range [][]CheckResult{
+				{},
+				{{Path: "src/file.php", Line: 1, Message: "warning", Severity: SeverityWarning}},
+			} {
+				check := &testCheck{Results: results}
+				output := captureOutput(func() {
+					assert.NoError(t, DoCheckReport(check, format, true, tools...))
+				})
+				assert.Contains(t, output, "phpstan")
+				assert.Contains(t, output, "invoked")
+				assert.NotContains(t, output, "No problems found")
+				if len(results) > 0 {
+					assert.Contains(t, output, "warning")
+				}
+			}
+		})
+	}
+}
+
+func TestPrintToolInvocationTableWithOperationTitle(t *testing.T) {
+	var output strings.Builder
+	tools := []ToolInvocationStatus{
+		{Name: "eslint", Status: "invoked"},
+		{Name: "rector", Status: "skipped", Reason: "not selected by --only"},
+	}
+	assert.NoError(t, PrintToolInvocationTable(&output, "Fixers", tools))
+	assert.Equal(t, "\nFixers:\n  eslint  invoked\n  rector  skipped  not selected by --only\n", output.String())
+}
+
+func TestToolInvocationTableFollowsFindings(t *testing.T) {
+	check := &testCheck{Results: []CheckResult{{Path: "src/file.php", Line: 1, Message: "problem", Severity: SeverityWarning}}}
+	tools := []ToolInvocationStatus{{Name: "builtin", Status: "invoked"}}
+
+	summary := captureOutput(func() {
+		assert.NoError(t, DoCheckReport(check, "summary", false, tools...))
+	})
+	assert.Less(t, strings.Index(summary, "src/file.php"), strings.Index(summary, "Checkers:"))
+	assert.Less(t, strings.Index(summary, "Checkers:"), strings.Index(summary, "✖ 1 problem"))
+	assert.Contains(t, summary, "\n\nCheckers:\n")
+	assert.NotContains(t, summary, "\n\n\nCheckers:\n")
+
+	markdown := captureOutput(func() {
+		assert.NoError(t, DoCheckReport(check, "markdown", false, tools...))
+	})
+	assert.Less(t, strings.Index(markdown, "## src/file.php"), strings.Index(markdown, "## Checkers"))
+}
+
+func TestStructuredReportsKeepMachineOutputAndShowToolStatuses(t *testing.T) {
+	check := &testCheck{Results: []CheckResult{}}
+	tools := []ToolInvocationStatus{
+		{Name: "phpstan", Status: "invoked"},
+		{Name: "builtin", Status: "skipped", Reason: "not selected by --only"},
+	}
+
+	var gitlabLog string
+	gitlab := captureOutput(func() {
+		gitlabLog = captureStderr(func() {
+			assert.NoError(t, DoCheckReport(check, "gitlab", false, tools...))
+		})
+	})
+	var issues []GitLabCodeQualityIssue
+	assert.NoError(t, json.Unmarshal([]byte(gitlab), &issues))
+	assert.Empty(t, issues)
+	for _, row := range toolInvocationRows(tools) {
+		assert.Contains(t, gitlabLog, "  "+row)
+	}
+
+	var junitLog string
+	junit := captureOutput(func() {
+		junitLog = captureStderr(func() {
+			assert.NoError(t, DoCheckReport(check, "junit", false, tools...))
+		})
+	})
+	var suite JUnitTestSuite
+	require.NoError(t, xml.Unmarshal([]byte(junit), &suite))
+	assert.Equal(t, 2, suite.Tests)
+	assert.Equal(t, 1, suite.Skipped)
+	require.Len(t, suite.TestCase, 2)
+	assert.Equal(t, "phpstan", suite.TestCase[0].Name)
+	assert.Equal(t, "tool", suite.TestCase[0].ClassName)
+	assert.Nil(t, suite.TestCase[0].Skipped)
+	require.NotNil(t, suite.TestCase[1].Skipped)
+	assert.Equal(t, "not selected by --only", suite.TestCase[1].Skipped.Message)
+	for _, row := range toolInvocationRows(tools) {
+		assert.Contains(t, junitLog, "  "+row)
+	}
+}
+
+func TestValidateReporter(t *testing.T) {
+	for _, format := range []string{"summary", "json", "github", "gitlab", "junit", "markdown"} {
+		assert.NoError(t, ValidateReporter(format))
+	}
+
+	assert.NoError(t, ValidateReporter("JSON"))
+
+	assert.EqualError(t, ValidateReporter("yaml"), `invalid reporting format "yaml", allowed values: summary, json, github, gitlab, junit, markdown`)
+}
+
+func TestReportFormatIsCaseInsensitive(t *testing.T) {
+	tools := []ToolInvocationStatus{{Name: "phpstan", Status: "invoked"}}
+
+	output := captureOutput(func() {
+		assert.NoError(t, DoCheckReport(&testCheck{}, "JSON", false, tools...))
+	})
+
+	var report struct {
+		Tools []ToolInvocationStatus `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &report))
+	assert.Equal(t, tools, report.Tools)
+}
+
+func TestGitLabReport(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "src/index.js",
+			Line:       42,
+			Identifier: "no-unused-vars",
+			Message:    "'unused' is assigned a value but never used.",
+			Severity:   SeverityWarning,
+		},
+		{
+			Path:       "src/utils.js",
+			Line:       15,
+			Identifier: "syntax-error",
+			Message:    "Missing semicolon",
+			Severity:   SeverityError,
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	output := captureOutput(func() {
+		err := doGitLabReport(check)
+		assert.NoError(t, err)
+	})
+
+	// Parse the JSON output
+	var issues []GitLabCodeQualityIssue
+	err := json.Unmarshal([]byte(output), &issues)
+	assert.NoError(t, err)
+	assert.Len(t, issues, 2)
+
+	// Check first issue (should be sorted by path then line)
+	issue1 := issues[0]
+	assert.Equal(t, "'unused' is assigned a value but never used.", issue1.Description)
+	assert.Equal(t, "no-unused-vars", issue1.CheckName)
+	assert.Equal(t, "minor", issue1.Severity) // Warning maps to minor
+	assert.Equal(t, "src/index.js", issue1.Location.Path)
+	assert.Equal(t, 42, issue1.Location.Lines.Begin)
+	assert.NotEmpty(t, issue1.Fingerprint) // Should have fingerprint
+
+	// Check second issue
+	issue2 := issues[1]
+	assert.Equal(t, "Missing semicolon", issue2.Description)
+	assert.Equal(t, "syntax-error", issue2.CheckName)
+	assert.Equal(t, "major", issue2.Severity) // Error maps to major
+	assert.Equal(t, "src/utils.js", issue2.Location.Path)
+	assert.Equal(t, 15, issue2.Location.Lines.Begin)
+	assert.NotEmpty(t, issue2.Fingerprint)
+
+	// Ensure fingerprints are different
+	assert.NotEqual(t, issue1.Fingerprint, issue2.Fingerprint)
+}
+
+func TestGitLabReportIsDeterministic(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "z_file.go",
+			Line:       5,
+			Identifier: "test.rule2",
+			Message:    "Second message",
+			Severity:   SeverityError,
+		},
+		{
+			Path:       "a_file.go",
+			Line:       10,
+			Identifier: "test.rule1",
+			Message:    "First message",
+			Severity:   SeverityWarning,
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	// Test GitLab report multiple times to ensure deterministic output
+	var previousOutput string
+	for i := range 5 {
+		output := captureOutput(func() {
+			_ = doGitLabReport(check)
+		})
+
+		if i > 0 {
+			assert.Equal(t, previousOutput, output, "GitLab report output should be deterministic")
+		}
+		previousOutput = output
+
+		// Parse and verify the issues are sorted correctly
+		var issues []GitLabCodeQualityIssue
+		err := json.Unmarshal([]byte(output), &issues)
+		assert.NoError(t, err)
+		assert.Len(t, issues, 2)
+
+		// Check sorting: should be sorted by path first, then by line
+		assert.Equal(t, "a_file.go", issues[0].Location.Path)
+		assert.Equal(t, 10, issues[0].Location.Lines.Begin)
+		assert.Equal(t, "z_file.go", issues[1].Location.Path)
+		assert.Equal(t, 5, issues[1].Location.Lines.Begin)
+	}
+}
+
+// testCheck is a simple implementation of Check interface for testing
+type testCheck struct {
+	Results []CheckResult
+}
+
+func (c *testCheck) AddResult(result CheckResult) {
+	c.Results = append(c.Results, result)
+}
+
+func (c *testCheck) GetResults() []CheckResult {
+	return c.Results
+}
+
+func (c *testCheck) HasErrors() bool {
+	for _, r := range c.Results {
+		if r.Severity == SeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *testCheck) RemoveByIdentifier(ignores []ToolConfigIgnore) Check {
+	// Simple implementation for testing
+	return c
+}
+
+func TestSummaryReportWithTip(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "src/Service.php",
+			Line:       10,
+			Identifier: "phpstan/missingType",
+			Message:    "Method has no return type",
+			Severity:   SeverityError,
+			Tip:        "Add a return type declaration",
+		},
+		{
+			Path:       "src/Service.php",
+			Line:       20,
+			Identifier: "phpstan/other",
+			Message:    "Some other error",
+			Severity:   SeverityError,
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	output := captureOutput(func() {
+		_ = doSummaryReport(check, false)
+	})
+
+	assert.Contains(t, output, "Method has no return type")
+	assert.Contains(t, output, "Tip: Add a return type declaration")
+	assert.Contains(t, output, "Some other error")
+}
+
+func TestGitHubReportNeutralizesSummaryCommands(t *testing.T) {
+	// A malicious path containing a workflow command must not be executed
+	// by the runner when emitted via the summary section.
+	testResults := []CheckResult{
+		{
+			Path:       "::add-mask::secret",
+			Line:       1,
+			Identifier: "test.rule",
+			Message:    "boom",
+			Severity:   SeverityError,
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	output := captureOutput(func() {
+		_ = doGitHubReport(check, false)
+	})
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	assert.True(t, strings.HasPrefix(lines[0], "::stop-commands::"), "summary must be wrapped in ::stop-commands::")
+
+	token := strings.TrimPrefix(lines[0], "::stop-commands::")
+	assert.NotEmpty(t, token)
+
+	// The matching resume marker must appear before any annotation lines.
+	resume := "::" + token + "::"
+	resumeIdx := -1
+	for i, line := range lines {
+		if line == resume {
+			resumeIdx = i
+			break
+		}
+	}
+	assert.GreaterOrEqual(t, resumeIdx, 1, "resume marker must follow the stop marker")
+
+	// Annotations should appear only after the resume marker.
+	for i, line := range lines {
+		if strings.HasPrefix(line, "::error") || strings.HasPrefix(line, "::warning") {
+			assert.Greater(t, i, resumeIdx, "annotations must come after resume marker")
+		}
+	}
+}
+
+func TestGitHubReportWithTip(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "src/Service.php",
+			Line:       10,
+			Identifier: "phpstan/missingType",
+			Message:    "Method has no return type",
+			Severity:   SeverityError,
+			Tip:        "Add a return type declaration",
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	output := captureOutput(func() {
+		_ = doGitHubReport(check, false)
+	})
+
+	assert.Contains(t, output, "Method has no return type")
+	assert.Contains(t, output, "%0A%0ATip: Add a return type declaration")
+}
+
+func TestGitLabReportWithTip(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "src/Service.php",
+			Line:       10,
+			Identifier: "phpstan/missingType",
+			Message:    "Method has no return type",
+			Severity:   SeverityError,
+			Tip:        "Add a return type declaration",
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	output := captureOutput(func() {
+		err := doGitLabReport(check)
+		assert.NoError(t, err)
+	})
+
+	var issues []GitLabCodeQualityIssue
+	err := json.Unmarshal([]byte(output), &issues)
+	assert.NoError(t, err)
+	assert.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Description, "Method has no return type")
+	assert.Contains(t, issues[0].Description, "Tip: Add a return type declaration")
+}
+
+func TestMarkdownReportWithTip(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "src/Service.php",
+			Line:       10,
+			Identifier: "phpstan/missingType",
+			Message:    "Method has no return type",
+			Severity:   SeverityError,
+			Tip:        "Add a return type declaration",
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	output := captureOutput(func() {
+		_ = doMarkdownReport(check, false)
+	})
+
+	assert.Contains(t, output, "Method has no return type")
+	assert.Contains(t, output, "*Tip: Add a return type declaration*")
+	assert.NotContains(t, output, "## Checkers")
+}
+
+func TestJSONReportWithTip(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "src/Service.php",
+			Line:       10,
+			Identifier: "phpstan/missingType",
+			Message:    "Method has no return type",
+			Severity:   SeverityError,
+			Tip:        "Add a return type declaration",
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	output := captureOutput(func() {
+		err := doJSONReport(check)
+		assert.NoError(t, err)
+	})
+
+	var result map[string][]CheckResult
+	err := json.Unmarshal([]byte(output), &result)
+	assert.NoError(t, err)
+	assert.Len(t, result["results"], 1)
+	assert.Equal(t, "Add a return type declaration", result["results"][0].Tip)
+	assert.NotContains(t, output, `"tools"`)
+}
+
+func TestJUnitReportWithTip(t *testing.T) {
+	testResults := []CheckResult{
+		{
+			Path:       "src/Service.php",
+			Line:       10,
+			Identifier: "phpstan/missingType",
+			Message:    "Method has no return type",
+			Severity:   SeverityError,
+			Tip:        "Add a return type declaration",
+		},
+		{
+			Path:       "src/Other.php",
+			Line:       5,
+			Identifier: "phpstan/warning",
+			Message:    "Some warning",
+			Severity:   SeverityWarning,
+			Tip:        "Consider fixing this",
+		},
+	}
+
+	check := &testCheck{Results: testResults}
+
+	output := captureOutput(func() {
+		err := doJUnitReport(check)
+		assert.NoError(t, err)
+	})
+
+	assert.Contains(t, output, "Method has no return type")
+	assert.Contains(t, output, "Tip: Add a return type declaration")
+	assert.Contains(t, output, "Some warning")
+	assert.Contains(t, output, "Tip: Consider fixing this")
+}
+
+func TestJUnitReportPreservesLineInClassName(t *testing.T) {
+	check := &testCheck{Results: []CheckResult{
+		{
+			Path:       "src/Service.php",
+			Line:       24,
+			Identifier: "phpstan/missingType",
+			Message:    "Method has no return type",
+			Severity:   SeverityError,
+		},
+	}}
+
+	output := captureOutput(func() {
+		err := doJUnitReport(check)
+		assert.NoError(t, err)
+	})
+
+	assert.Contains(t, output, `classname="src/Service.php:24"`)
+}
+
+// captureOutput captures stdout during function execution
+func captureOutput(fn func()) string {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		panic(err)
+	}
+	return buf.String()
+}
+
+func captureStderr(fn func()) string {
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	os.Stderr = oldStderr
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		panic(err)
+	}
+	return buf.String()
+}
+
+func TestSummaryLine(t *testing.T) {
+	assert.Equal(t, "✓ No problems found", summaryLine(0, 0, 0))
+	assert.Equal(t, "✖ 1 problem (1 error, 0 warnings)", summaryLine(1, 1, 0))
+	assert.Equal(t, "✖ 15 problems (14 errors, 1 warning)", summaryLine(15, 14, 1))
+}

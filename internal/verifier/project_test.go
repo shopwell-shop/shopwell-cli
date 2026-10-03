@@ -1,0 +1,94 @@
+package verifier
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/testhelper"
+)
+
+// stubShopwellVersions replaces the network-backed version lookup with a
+// fixed list, so GetConfigFromProject does not hit repo.packagist.org.
+func stubShopwellVersions(t *testing.T) {
+	t.Helper()
+	original := getShopwellVersions
+	t.Cleanup(func() { getShopwellVersions = original })
+	getShopwellVersions = func(context.Context) ([]string, error) {
+		return []string{"6.6.0.0"}, nil
+	}
+}
+
+const testProjectYAMLSingleBundle = `compatibility_date: "2024-01-01"
+build:
+  bundles:
+    - path: src/MyBundle
+`
+
+var testProjectComposerJSON = testhelper.ComposerJSON{
+	Type:    "project",
+	Require: map[string]string{"shopwell/core": "~6.6.0"},
+}
+
+func TestGetConfigFromProjectYAMLBundles(t *testing.T) {
+	stubShopwellVersions(t)
+	p := testhelper.NewProject(t).
+		File("composer.json", testProjectComposerJSON.String()).
+		File(".shopwell-project.yml", testProjectYAMLSingleBundle)
+
+	// Create bundle directory with an admin subfolder
+	p.Dir("src/MyBundle/Resources/app/administration")
+	adminPath := filepath.Join(p.Root, "src", "MyBundle", "Resources", "app", "administration")
+
+	cfg, err := GetConfigFromProject(t.Context(), p.Root, true)
+	assert.NoError(t, err)
+
+	assert.Contains(t, cfg.SourceDirectories, filepath.Join(p.Root, "src", "MyBundle"))
+	assert.Contains(t, cfg.AdminDirectories, adminPath)
+}
+
+func TestGetConfigFromProjectYAMLBundleStorefront(t *testing.T) {
+	stubShopwellVersions(t)
+	p := testhelper.NewProject(t).
+		File("composer.json", testProjectComposerJSON.String()).
+		File(".shopwell-project.yml", testProjectYAMLSingleBundle)
+
+	// Create bundle directory with a storefront subfolder only
+	p.Dir("src/MyBundle/Resources/app/storefront")
+	storefrontPath := filepath.Join(p.Root, "src", "MyBundle", "Resources", "app", "storefront")
+
+	cfg, err := GetConfigFromProject(t.Context(), p.Root, true)
+	assert.NoError(t, err)
+
+	assert.Contains(t, cfg.SourceDirectories, filepath.Join(p.Root, "src", "MyBundle"))
+	assert.Contains(t, cfg.StorefrontDirectories, storefrontPath)
+}
+
+func TestGetConfigFromProjectYAMLBundleDeduplication(t *testing.T) {
+	stubShopwellVersions(t)
+
+	// composer.json declares the same bundle as the YAML config
+	bundleComposer := testProjectComposerJSON
+	bundleComposer.Extra = map[string]any{
+		"shopwell-bundles": map[string]any{"src/MyBundle": map[string]string{"name": "MyBundle"}},
+	}
+	p := testhelper.NewProject(t).
+		File("composer.json", bundleComposer.String()).
+		File(".shopwell-project.yml", testProjectYAMLSingleBundle)
+
+	p.Dir("src/MyBundle")
+
+	cfg, err := GetConfigFromProject(t.Context(), p.Root, true)
+	assert.NoError(t, err)
+
+	bundleSrcPath := filepath.Join(p.Root, "src", "MyBundle")
+	count := 0
+	for _, d := range cfg.SourceDirectories {
+		if d == bundleSrcPath {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "bundle declared in both composer.json and YAML config should only appear once in SourceDirectories")
+}

@@ -1,0 +1,167 @@
+package flexmigrator
+
+import (
+	"encoding/json"
+	"path/filepath"
+	"testing"
+
+	"github.com/shyim/go-composer"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/testhelper"
+)
+
+func TestMigrateComposerJson(t *testing.T) {
+	t.Parallel()
+	t.Run("successful migration", func(t *testing.T) {
+		t.Parallel()
+		// Create a temporary directory for the test
+		tempDir := t.TempDir()
+
+		// Create a test composer.json file
+		initialComposer := &composer.Json{
+			Name: "shopwell/project",
+			Require: composer.PackageLink{
+				"shopwell/recovery": "1.0.0",
+				"php":               "^7.4",
+			},
+			RequireDev: composer.PackageLink{
+				"some/dev-package": "^1.0",
+			},
+			Config: map[string]any{
+				"platform": map[string]string{
+					"php": "7.4",
+				},
+				"allow-plugins": map[string]any{
+					"composer/package-versions-deprecated": true,
+				},
+			},
+			Repositories: composer.Repositories{},
+			Scripts:      map[string]any{},
+			Extra:        map[string]any{},
+		}
+
+		composerFile := filepath.Join(tempDir, "composer.json")
+		content, err := json.MarshalIndent(initialComposer, "", "  ")
+		require.NoError(t, err)
+		testhelper.WriteFile(t, composerFile, string(content))
+
+		// Run the migration
+		err = MigrateComposerJson(tempDir)
+		require.NoError(t, err)
+
+		// Read and verify the migrated composer.json
+		migratedComposer, err := composer.ReadJson(composerFile)
+		require.NoError(t, err)
+
+		// Verify package removals
+		assert.False(t, migratedComposer.HasPackage("shopwell/recovery"))
+		assert.False(t, migratedComposer.HasPackage("php"))
+
+		// Verify package additions
+		assert.Equal(t, "^2", migratedComposer.Require["symfony/flex"])
+		assert.Equal(t, "*", migratedComposer.Require["symfony/runtime"])
+		assert.Equal(t, "*", migratedComposer.RequireDev["shopwell/dev-tools"])
+
+		// Verify config changes
+		assert.False(t, migratedComposer.HasConfig("platform"))
+
+		// Verify plugin configuration
+		allowPlugins, ok := migratedComposer.Config["allow-plugins"].(map[string]interface{})
+		require.True(t, ok)
+		flexEnabled, ok := allowPlugins["symfony/flex"]
+		require.True(t, ok)
+		assert.Equal(t, true, flexEnabled)
+		runtimeEnabled, ok := allowPlugins["symfony/runtime"]
+		require.True(t, ok)
+		assert.Equal(t, true, runtimeEnabled)
+		_, hasDeprecatedPlugin := allowPlugins["composer/package-versions-deprecated"]
+		assert.False(t, hasDeprecatedPlugin)
+
+		// Verify symfony configuration
+		symfonyConfig, ok := migratedComposer.Extra["symfony"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, true, symfonyConfig["allow-contrib"])
+		endpoints, ok := symfonyConfig["endpoint"].([]interface{})
+		require.True(t, ok)
+		assert.Contains(t, endpoints, "https://raw.githubusercontent.com/shopwell-shop/recipes/flex/main/index.json")
+		assert.Contains(t, endpoints, "flex://defaults")
+
+		// Verify repository configuration
+		assert.True(t, migratedComposer.Repositories.HasRepository("custom/plugins/*"))
+		assert.True(t, migratedComposer.Repositories.HasRepository("custom/plugins/*/packages/*"))
+		assert.True(t, migratedComposer.Repositories.HasRepository("https://shopwell-shop.github.io/conflicts/"))
+
+		// Verify scripts configuration
+		autoScripts, ok := migratedComposer.Scripts["auto-scripts"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, "symfony-cmd", autoScripts["assets:install"])
+
+		postInstallCmd, ok := migratedComposer.Scripts["post-install-cmd"].([]interface{})
+		require.True(t, ok)
+		assert.Contains(t, postInstallCmd, "@auto-scripts")
+
+		postUpdateCmd, ok := migratedComposer.Scripts["post-update-cmd"].([]interface{})
+		require.True(t, ok)
+		assert.Contains(t, postUpdateCmd, "@auto-scripts")
+	})
+
+	t.Run("existing conflicts repository is not duplicated", func(t *testing.T) {
+		t.Parallel()
+		tempDir := t.TempDir()
+
+		initialComposer := &composer.Json{
+			Name: "shopwell/project",
+			Require: composer.PackageLink{
+				"shopwell/core": "6.5.0.0",
+			},
+			Repositories: composer.Repositories{
+				{
+					Type: "composer",
+					URL:  "https://shopwell-shop.github.io/conflicts/",
+				},
+			},
+			Config: map[string]any{
+				"allow-plugins": map[string]any{},
+			},
+			Scripts: map[string]any{},
+			Extra:   map[string]any{},
+		}
+
+		composerFile := filepath.Join(tempDir, "composer.json")
+		content, err := json.MarshalIndent(initialComposer, "", "  ")
+		require.NoError(t, err)
+		testhelper.WriteFile(t, composerFile, string(content))
+
+		require.NoError(t, MigrateComposerJson(tempDir))
+
+		migratedComposer, err := composer.ReadJson(composerFile)
+		require.NoError(t, err)
+
+		count := 0
+		for _, repo := range migratedComposer.Repositories {
+			if repo.URL == "https://shopwell-shop.github.io/conflicts/" {
+				count++
+			}
+		}
+		assert.Equal(t, 1, count)
+	})
+
+	t.Run("non-existent composer.json", func(t *testing.T) {
+		t.Parallel()
+		tempDir := t.TempDir()
+		err := MigrateComposerJson(tempDir)
+		assert.Error(t, err)
+	})
+
+	t.Run("invalid composer.json", func(t *testing.T) {
+		t.Parallel()
+		tempDir := t.TempDir()
+		composerFile := filepath.Join(tempDir, "composer.json")
+		testhelper.WriteFile(t, composerFile, "invalid json")
+
+		err := MigrateComposerJson(tempDir)
+		assert.Error(t, err)
+	})
+}

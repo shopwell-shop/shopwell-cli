@@ -1,0 +1,148 @@
+package account_api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"golang.org/x/oauth2"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/cliversion"
+	"github.com/shopwell-shop/shopwell-cli/internal/system"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+type Client struct {
+	Token *oauth2.Token `json:"token,omitempty"`
+}
+
+func (c *Client) NewAuthenticatedRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	r, err := http.NewRequestWithContext(ctx, method, path, body)
+	if err != nil {
+		return nil, err
+	}
+
+	r.Header.Set("content-type", "application/json")
+	r.Header.Set("accept", "application/json")
+
+	if c.Token != nil {
+		c.Token.SetAuthHeader(r)
+	}
+
+	r.Header.Set("user-agent", cliversion.UserAgent())
+
+	return r, nil
+}
+
+func (*Client) doRequest(request *http.Request) ([]byte, error) {
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+
+	logging.FromContext(request.Context()).Debugf("%s: %s, took: %s", request.Method, request.URL.String(), time.Since(start))
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		_ = resp.Body.Close()
+
+		return nil, fmt.Errorf("cannot read response body: %w", err)
+	}
+
+	if err := resp.Body.Close(); err != nil {
+		return nil, fmt.Errorf("cannot close response body: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf(string(data)+", got status code %d", resp.StatusCode)
+	}
+
+	return data, nil
+}
+
+func (c *Client) isTokenValid() bool {
+	if c.Token != nil {
+		return time.Until(c.Token.Expiry) > time.Minute
+	}
+
+	return false
+}
+
+func getCacheFileName() string {
+	if isStaging() {
+		return "shopwell-api-token-staging.json"
+	}
+	return "shopwell-api-token.json"
+}
+
+func getApiTokenCacheFilePath() string {
+	return filepath.Join(system.GetShopwellCliCacheDir(), getCacheFileName())
+}
+
+func createApiFromTokenCache(ctx context.Context) (*Client, error) {
+	tokenFilePath := getApiTokenCacheFilePath()
+
+	if _, err := os.Stat(tokenFilePath); os.IsNotExist(err) {
+		return nil, err
+	}
+
+	content, err := os.ReadFile(tokenFilePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var client *Client
+	err = json.Unmarshal(content, &client)
+	if err != nil {
+		return nil, err
+	}
+
+	logging.FromContext(ctx).Debugf("Using token cache from %s", tokenFilePath)
+
+	if !client.isTokenValid() {
+		return nil, errors.New("token is expired")
+	}
+
+	return client, nil
+}
+
+func saveApiTokenToTokenCache(client *Client) error {
+	tokenFilePath := getApiTokenCacheFilePath()
+
+	content, err := json.Marshal(client)
+	if err != nil {
+		return err
+	}
+
+	tokenFileDirectory := filepath.Dir(tokenFilePath)
+	if _, err := os.Stat(tokenFileDirectory); os.IsNotExist(err) {
+		err := os.MkdirAll(tokenFileDirectory, 0o750)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = os.WriteFile(tokenFilePath, content, 0o600)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func InvalidateTokenCache() error {
+	tokenFilePath := getApiTokenCacheFilePath()
+
+	if _, err := os.Stat(tokenFilePath); os.IsNotExist(err) {
+		return nil
+	}
+
+	return os.Remove(tokenFilePath)
+}

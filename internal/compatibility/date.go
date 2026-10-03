@@ -1,0 +1,58 @@
+package compatibility
+
+import (
+	"fmt"
+	"time"
+)
+
+const dateLayout = "2006-01-02"
+const defaultCompatibilityDate = "2026-02-11"
+
+var now = time.Now
+
+func ValidateDate(value string) error {
+	if value == "" {
+		return nil
+	}
+
+	if _, err := parseDate(value); err != nil {
+		return fmt.Errorf("invalid compatibility_date %q: expected format YYYY-MM-DD", value)
+	}
+
+	return nil
+}
+
+func IsAtLeast(compatibilityDate, requiredDate string) (bool, error) {
+	if compatibilityDate == "" {
+		compatibilityDate = DefaultDate()
+	}
+
+	currentDate, err := parseDate(compatibilityDate)
+	if err != nil {
+		return false, fmt.Errorf("invalid compatibility_date %q: expected format YYYY-MM-DD", compatibilityDate)
+	}
+
+	minDate, err := parseDate(requiredDate)
+	if err != nil {
+		return false, fmt.Errorf("invalid required compatibility date %q: expected format YYYY-MM-DD", requiredDate)
+	}
+
+	return !currentDate.Before(minDate), nil
+}
+
+func IsBefore(compatibilityDate, requiredDate string) bool {
+	ok, _ := IsAtLeast(compatibilityDate, requiredDate)
+	return !ok
+}
+
+func parseDate(value string) (time.Time, error) {
+	return time.Parse(dateLayout, value)
+}
+
+func DefaultDate() string {
+	return defaultCompatibilityDate
+}
+
+func TodayDate() string {
+	return now().Format(dateLayout)
+}

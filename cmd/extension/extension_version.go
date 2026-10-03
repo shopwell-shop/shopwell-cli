@@ -1,0 +1,53 @@
+package extension
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/extension"
+)
+
+var extensionVersionCmd = &cobra.Command{
+	Use:   "get-version path",
+	Short: "Print an extension's declared version from a folder or ZIP",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		path, err := filepath.Abs(args[0])
+		if err != nil {
+			return fmt.Errorf("cannot find path: %w", err)
+		}
+
+		stat, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("cannot find path: %w", err)
+		}
+
+		var ext extension.Extension
+
+		if stat.IsDir() {
+			ext, err = extension.GetExtensionByFolder(cmd.Context(), path)
+		} else {
+			ext, err = extension.GetExtensionByZip(cmd.Context(), path)
+		}
+
+		if err != nil {
+			return fmt.Errorf("cannot open extension: %w", err)
+		}
+
+		version, err := ext.GetVersion()
+		if err != nil {
+			return fmt.Errorf("cannot generate version: %w", err)
+		}
+
+		fmt.Println(version.String())
+
+		return nil
+	},
+}
+
+func init() {
+	extensionRootCmd.AddCommand(extensionVersionCmd)
+}

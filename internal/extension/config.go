@@ -1,0 +1,401 @@
+package extension
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/changelog"
+	"github.com/shopwell-shop/shopwell-cli/internal/compatibility"
+	"github.com/shopwell-shop/shopwell-cli/internal/validation"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+type ConfigBuild struct {
+	// ExtraBundles can be used to declare additional bundles to be considered for building
+	ExtraBundles []ConfigExtraBundle `yaml:"extraBundles,omitempty"`
+	// Override the shopwell version constraint for building, can be used to specify the version of the shopwell to use for building
+	ShopwellVersionConstraint string `yaml:"shopwellVersionConstraint,omitempty"`
+	// Configuration for zipping
+	Zip ConfigBuildZip `yaml:"zip"`
+}
+
+// Configuration for zipping.
+type ConfigBuildZip struct {
+	// Configuration for composer
+	Composer ConfigBuildZipComposer `yaml:"composer,omitempty"`
+	// Configuration for assets
+	Assets ConfigBuildZipAssets `yaml:"assets,omitempty"`
+	// Configuration for packing
+	Pack ConfigBuildZipPack `yaml:"pack,omitempty"`
+
+	Checksum ConfigBuildZipChecksum `yaml:"checksum,omitempty"`
+}
+
+// Configuration for checksum calculation.
+type ConfigBuildZipChecksum struct {
+	// Following files will be excluded from the checksum calculation
+	Ignore []string `yaml:"ignore,omitempty"`
+}
+
+type ConfigBuildZipComposer struct {
+	// When enabled, a vendor folder will be created in the zip build
+	Enabled bool `yaml:"enabled"`
+	// Commands to run before the composer install
+	BeforeHooks []string `yaml:"before_hooks,omitempty"`
+	// Commands to run after the composer install
+	AfterHooks []string `yaml:"after_hooks,omitempty"`
+	// Composer packages to be excluded from the zip build
+	ExcludedPackages []string `yaml:"excluded_packages,omitempty"`
+}
+
+type ConfigBuildZipAssets struct {
+	// When enabled, the shopwell-cli build the assets
+	Enabled bool `yaml:"enabled"`
+	// When enabled, compiled assets are cached and restored across builds, keyed by the source-file content hash
+	EnableAssetCaching bool `yaml:"enable_asset_caching"`
+	// Commands to run before the assets build
+	BeforeHooks []string `yaml:"before_hooks,omitempty"`
+	// Commands to run after the assets build
+	AfterHooks []string `yaml:"after_hooks,omitempty"`
+	// When enabled, builtin esbuild will be used for the admin assets
+	EnableESBuildForAdmin bool `yaml:"enable_es_build_for_admin"`
+	// When enabled, builtin esbuild will be used for the storefront assets
+	EnableESBuildForStorefront bool `yaml:"enable_es_build_for_storefront"`
+	// When disabled, builtin sass support will be disabled
+	DisableSass bool `yaml:"disable_sass"`
+	// When enabled, npm will install only production dependencies
+	NpmStrict bool `yaml:"npm_strict"`
+	// Additional paths to include in asset caching
+	AdditionalCaches []ConfigBuildZipAssetsAdditionalCache `yaml:"additional_caches,omitempty"`
+}
+
+type ConfigBuildZipAssetsAdditionalCache struct {
+	// The output path to cache, relative to extension root
+	Path string `yaml:"path"`
+	// Source paths to hash for the cache key, relative to extension root
+	SourcePaths []string `yaml:"source_paths"`
+}
+
+type ConfigBuildZipPackExcludes struct {
+	// Paths to exclude from the zip build
+	Paths []string `yaml:"paths,omitempty"`
+}
+
+type ConfigBuildZipPack struct {
+	// Excludes can be used to exclude files from the zip build
+	Excludes ConfigBuildZipPackExcludes `yaml:"excludes,omitempty"`
+	// Commands to run before the pack
+	BeforeHooks []string `yaml:"before_hooks,omitempty"`
+}
+
+type ConfigExtraBundle struct {
+	// Path to the bundle, relative from the extension root (src folder)
+	Path string `yaml:"path"`
+	// Name of the bundle, if empty the folder name of path will be used
+	Name string `yaml:"name"`
+}
+
+// ResolvePath returns the resolved path for the extra bundle relative to the given root directory.
+func (b ConfigExtraBundle) ResolvePath(rootDir string) string {
+	if b.Path != "" {
+		return filepath.Join(rootDir, b.Path)
+	}
+	return filepath.Join(rootDir, b.Name)
+}
+
+// ResolveName returns the bundle name, defaulting to the base of the path if not explicitly set.
+func (b ConfigExtraBundle) ResolveName() string {
+	if b.Name != "" {
+		return b.Name
+	}
+	return filepath.Base(b.Path)
+}
+
+type ConfigStore struct {
+	// Specifies the visibility in stores.
+	Availabilities *[]string `yaml:"availabilities" jsonschema:"enum=German,enum=International"`
+	// Specifies the default locale.
+	DefaultLocale *string `yaml:"default_locale" jsonschema:"enum=de_DE,enum=en_GB"`
+	// Specifies the languages the extension is translated.
+	Localizations *[]string `yaml:"localizations" jsonschema:"enum=de_DE,enum=en_GB,enum=bs_BA,enum=bg_BG,enum=cs_CZ,enum=da_DK,enum=de_CH,enum=el_GR,enum=en_US,enum=es_ES,enum=fi_FI,enum=fr_FR,enum=hi_IN,enum=hr_HR,enum=hu_HU,enum=hy,enum=id_ID,enum=it_IT,enum=ko_KR,enum=lv_LV,enum=ms_MY,enum=nl_NL,enum=pl_PL,enum=pt_BR,enum=pt_PT,enum=ro_RO,enum=ru_RU,enum=sk_SK,enum=sl_SI,enum=sr_RS,enum=sv_SE,enum=th_TH,enum=tr_TR,enum=uk_UA,enum=vi_VN,enum=zh_CN,enum=zh_TW"`
+	// Specifies the type of the extension.
+	Type *string `yaml:"type" jsonschema:"enum=extension,enum=theme"`
+	// Specifies the Path to the icon (256x256 px) for store.
+	Icon *string `yaml:"icon"`
+	// Specifies whether the extension should automatically be set compatible with Shopwell bugfix versions.
+	AutomaticBugfixVersionCompatibility *bool `yaml:"automatic_bugfix_version_compatibility"`
+	// Specifies the meta title of the extension in store.
+	MetaTitle ConfigTranslated[string] `yaml:"meta_title" jsonschema:"maxLength=50"`
+	// Specifies the meta description of the extension in store.
+	MetaDescription ConfigTranslated[string] `yaml:"meta_description" jsonschema:"maxLength=185"`
+	// Specifies the description of the extension in store.
+	Description ConfigTranslated[string] `yaml:"description"`
+	// Installation manual of the extension in store.
+	InstallationManual ConfigTranslated[string] `yaml:"installation_manual"`
+	// Specifies the tags of the extension.
+	Tags ConfigTranslated[[]string] `yaml:"tags,omitempty"`
+	// Specifies the links of YouTube-Videos to show or describe the extension.
+	Videos ConfigTranslated[[]string] `yaml:"videos,omitempty"`
+	// Specifies the highlights of the extension.
+	Highlights ConfigTranslated[[]string] `yaml:"highlights,omitempty"`
+	// Specifies the features of the extension.
+	Features ConfigTranslated[[]string] `yaml:"features"`
+	// Specifies Frequently Asked Questions for the extension.
+	Faq ConfigTranslated[[]ConfigStoreFaq] `yaml:"faq"`
+	// Specifies images for the extension in the store.
+	Images *[]ConfigStoreImage `yaml:"images,omitempty"`
+	// Specifies the directory where the images are located.
+	ImageDirectory *string `yaml:"image_directory,omitempty"`
+	// Specifies the demo shops of the extension in the store.
+	DemoShops *[]ConfigStoreDemoShop `yaml:"demo_shops,omitempty"`
+}
+
+type ConfigStoreDemoShop struct {
+	// Specifies the type of the demo shop.
+	Type string `yaml:"type" jsonschema:"enum=frontend,enum=backend"`
+	// Specifies the URL to the demo shop.
+	Link string `yaml:"link"`
+	// Specifies the language of the demo shop.
+	Localization string `yaml:"localization" jsonschema:"enum=de_DE,enum=en_GB"`
+	// Specifies the login name to access the demo shop.
+	LoginName string `yaml:"login_name,omitempty"`
+	// Specifies the login password to access the demo shop.
+	LoginPassword string `yaml:"login_password,omitempty"`
+}
+
+type ConfigTranslated[T any] struct {
+	German  *T `yaml:"de,omitempty"`
+	English *T `yaml:"en,omitempty"`
+}
+
+type ConfigStoreFaq struct {
+	Question string `yaml:"question"`
+	Answer   string `yaml:"answer"`
+	Position int    `yaml:"position"`
+}
+
+type ConfigStoreImage struct {
+	// File path to image relative from root of the extension
+	File string `yaml:"file"`
+	// Specifies whether the image is active in the language.
+	Activate ConfigStoreImageActivate `yaml:"activate"`
+	// Specifies whether the image is a preview in the language.
+	Preview ConfigStoreImagePreview `yaml:"preview"`
+	// Position of the image in the store gallery. Images are sorted ascending; the lowest value is shown first.
+	Position int `yaml:"position"`
+	// Deprecated: use Position instead.
+	Priority int `yaml:"priority,omitempty" jsonschema_extras:"deprecated=true"`
+}
+
+// GetPosition returns the configured image position, falling back to the deprecated priority.
+func (i ConfigStoreImage) GetPosition() int {
+	if i.Position != 0 {
+		return i.Position
+	}
+
+	return i.Priority
+}
+
+type ConfigStoreImageActivate struct {
+	German  bool `yaml:"de"`
+	English bool `yaml:"en"`
+}
+
+type ConfigStoreImagePreview struct {
+	German  bool `yaml:"de"`
+	English bool `yaml:"en"`
+}
+
+// ConfigValidation is used to configure the extension validation.
+type ConfigValidation struct {
+	// Ignore items from the validation.
+	Ignore          ConfigValidationList `yaml:"ignore,omitempty"`
+	StoreCompliance bool                 `yaml:"store_compliance,omitempty"`
+	// PhpVersion overrides the PHP version used for linting (e.g. "8.4").
+	// When set, this takes precedence over the version derived from composer.json or the static Shopwell-to-PHP mapping.
+	PhpVersion string `yaml:"php_version,omitempty"`
+}
+
+type ConfigValidationList []validation.ToolConfigIgnore
+
+func (c *ConfigValidationList) Identifiers() []string {
+	identifiers := []string{}
+	for _, item := range *c {
+		identifiers = append(identifiers, item.Identifier)
+	}
+	return identifiers
+}
+
+type Config struct {
+	// Controls date-based compatibility behavior, formatted as YYYY-MM-DD.
+	CompatibilityDate string `yaml:"compatibility_date,omitempty" jsonschema:"format=date"`
+	// Store is the store configuration of the extension.
+	Store ConfigStore `yaml:"store,omitempty"`
+	// Build is the build configuration of the extension.
+	Build ConfigBuild `yaml:"build,omitempty"`
+	// Changelog is the changelog configuration of the extension.
+	Changelog changelog.Config `yaml:"changelog,omitempty"`
+	// Validation is the validation configuration of the extension.
+	Validation      ConfigValidation `yaml:"validation,omitempty"`
+	storageLocation string
+}
+
+func (c *Config) HasCompatibilityDate() bool {
+	return c.CompatibilityDate != ""
+}
+
+func (c *Config) IsCompatibilityDateAtLeast(requiredDate string) (bool, error) {
+	return compatibility.IsAtLeast(c.CompatibilityDate, requiredDate)
+}
+
+func (c *Config) IsCompatibilityDateBefore(requiredDate string) bool {
+	return compatibility.IsBefore(c.CompatibilityDate, requiredDate)
+}
+
+func (c *Config) GetStorageLocation() string {
+	return c.storageLocation
+}
+
+func readExtensionConfig(ctx context.Context, dir string) (*Config, error) {
+	config := &Config{}
+	config.Build.Zip.Assets.Enabled = true
+	config.Build.Zip.Composer.Enabled = true
+
+	config.storageLocation = ConfigPath(ctx, dir)
+	if config.storageLocation == "" {
+		config.CompatibilityDate = compatibility.DefaultDate()
+		return config, nil
+	}
+
+	errorFormat := "file: " + config.storageLocation + ": %v"
+
+	fileHandle, err := os.ReadFile(config.storageLocation)
+	if err != nil {
+		return nil, fmt.Errorf(errorFormat, err)
+	}
+
+	err = yaml.Unmarshal(fileHandle, &config)
+	if err != nil {
+		return nil, fmt.Errorf(errorFormat, err)
+	}
+
+	if config.CompatibilityDate == "" {
+		logging.FromContext(ctx).Warnf("Config %s is missing compatibility_date, defaulting to %s", config.storageLocation, compatibility.DefaultDate())
+		config.CompatibilityDate = compatibility.DefaultDate()
+	}
+
+	err = validateExtensionConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf(errorFormat, err)
+	}
+
+	return config, nil
+}
+
+func validateExtensionConfig(config *Config) error {
+	if err := compatibility.ValidateDate(config.CompatibilityDate); err != nil {
+		return err
+	}
+
+	if config.Store.Tags.English != nil && len(*config.Store.Tags.English) > 5 {
+		return errors.New("store.tags.en can contain at most 5 items")
+	}
+
+	if config.Store.Tags.German != nil && len(*config.Store.Tags.German) > 5 {
+		return errors.New("store.tags.de can contain at most 5 items")
+	}
+
+	if config.Store.Videos.English != nil && len(*config.Store.Videos.English) > 2 {
+		return errors.New("store.videos.en can contain at most 2 items")
+	}
+
+	if config.Store.Videos.German != nil && len(*config.Store.Videos.German) > 2 {
+		return errors.New("store.videos.de can contain at most 2 items")
+	}
+
+	for i, cache := range config.Build.Zip.Assets.AdditionalCaches {
+		if cache.Path == "" {
+			return fmt.Errorf("build.zip.assets.additional_caches[%d].path is required", i)
+		}
+
+		if err := validateRelativePath(cache.Path); err != nil {
+			return fmt.Errorf("build.zip.assets.additional_caches[%d].path: %w", i, err)
+		}
+
+		if len(cache.SourcePaths) == 0 {
+			return fmt.Errorf("build.zip.assets.additional_caches[%d].source_paths is required", i)
+		}
+
+		for j, sp := range cache.SourcePaths {
+			if err := validateRelativePath(sp); err != nil {
+				return fmt.Errorf("build.zip.assets.additional_caches[%d].source_paths[%d]: %w", i, j, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func validateRelativePath(p string) error {
+	if filepath.IsAbs(p) {
+		return fmt.Errorf("path must be relative, got %q", p)
+	}
+
+	cleaned := filepath.Clean(p)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path must not escape the extension root, got %q", p)
+	}
+
+	return nil
+}
+
+func (c *Config) Dump(dir string) error {
+	filePath := c.storageLocation
+	if filePath == "" {
+		filePath = filepath.Join(dir, ConfigLocations[0])
+	}
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		return err
+	}
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("failed to close file: %v", err)
+		}
+	}()
+
+	encoder := yaml.NewEncoder(file)
+	defer func() {
+		if err := encoder.Close(); err != nil {
+			log.Printf("failed to close encoder: %v", err)
+		}
+	}()
+
+	return encoder.Encode(c)
+}
+
+func (c *ConfigStore) IsInGermanStore() bool {
+	if c.Availabilities == nil {
+		return true
+	}
+
+	for _, availability := range *c.Availabilities {
+		if availability == "German" {
+			return true
+		}
+	}
+
+	return false
+}

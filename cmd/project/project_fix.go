@@ -1,0 +1,79 @@
+package project
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/verifier"
+)
+
+var projectFixCmd = &cobra.Command{
+	Use:   "fix [path]",
+	Short: "Apply code-quality fixes to a project",
+	Long:  "Run code-quality fixers on the project's own code, such as extensions in custom/ and configured bundles, and change the files directly. Packages that Composer installs into vendor/ are not changed. Requires a Git repository so the changes can be reviewed, unless --allow-non-git is passed.",
+	Args:  cobra.MaximumNArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		return verifier.SetupTools(cmd.Context(), cmd.Root().Version)
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var err error
+
+		projectPath := ""
+
+		if len(args) > 0 {
+			projectPath = args[0]
+		} else {
+			projectPath, err = shop.FindClosestShopwellProject(false)
+			if err != nil {
+				return err
+			}
+		}
+
+		projectPath, err = filepath.Abs(projectPath)
+		if err != nil {
+			return fmt.Errorf("cannot find path: %w", err)
+		}
+
+		allowNonGit, _ := cmd.Flags().GetBool("allow-non-git")
+		if !allowNonGit {
+			if stat, err := os.Stat(filepath.Join(projectPath, ".git")); err != nil || !stat.IsDir() {
+				return fmt.Errorf("%s is not a git repository. Use --allow-non-git flag to run anyway", projectPath)
+			}
+		}
+
+		only, _ := cmd.Flags().GetString("only")
+
+		toolCfg, err := verifier.GetConfigFromProject(cmd.Context(), projectPath, false)
+		if err != nil {
+			return err
+		}
+
+		var gr errgroup.Group
+
+		tools := verifier.GetToolsOf[verifier.FixTool]()
+
+		tools, err = tools.Only(only)
+		if err != nil {
+			return err
+		}
+
+		for _, tool := range tools {
+			gr.Go(func() error {
+				return tool.Fix(cmd.Context(), *toolCfg)
+			})
+		}
+
+		return gr.Wait()
+	},
+}
+
+func init() {
+	projectRootCmd.AddCommand(projectFixCmd)
+	projectFixCmd.PersistentFlags().String("only", "", "Run only the specified fixers (comma-separated, e.g. eslint,rector)")
+	projectFixCmd.PersistentFlags().Bool("allow-non-git", false, "Allow fix to run outside a Git repository")
+}

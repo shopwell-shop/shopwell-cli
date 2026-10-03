@@ -1,0 +1,39 @@
+package account
+
+import (
+	"fmt"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
+	account_api "github.com/shopwell-shop/shopwell-cli/internal/account-api"
+	"github.com/shopwell-shop/shopwell-cli/internal/extension"
+)
+
+var accountCompanyProducerExtensionInfoPullCmd = &cobra.Command{
+	Use:   "pull [path]",
+	Short: "Pull store listing data into local config",
+	Args:  cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		absolutePath, err := filepath.Abs(args[0])
+		if err != nil {
+			return fmt.Errorf("cannot open file: %w", err)
+		}
+
+		zipExt, err := extension.GetExtensionByFolder(cmd.Context(), absolutePath)
+		if err != nil {
+			return fmt.Errorf("cannot open extension: %w", err)
+		}
+
+		p, err := services.AccountClient.Producer(cmd.Context())
+		if err != nil {
+			return fmt.Errorf("cannot get producer endpoint: %w", err)
+		}
+
+		return account_api.PullExtensionStoreInfo(cmd.Context(), p, zipExt, account_api.PullOptions{})
+	},
+}
+
+func init() {
+	accountCompanyProducerExtensionInfoCmd.AddCommand(accountCompanyProducerExtensionInfoPullCmd)
+}

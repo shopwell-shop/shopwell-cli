@@ -1,0 +1,170 @@
+package verifier
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/extension"
+	"github.com/shopwell-shop/shopwell-cli/internal/validation"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+type ToolList[T Tool] []T
+
+var availableTools = ToolList[Tool]{}
+
+func AddTool(tool Tool) {
+	availableTools = append(availableTools, tool)
+}
+
+func GetTools() ToolList[Tool] {
+	return availableTools
+}
+
+// GetToolsOf returns registered tools that implement the requested capability.
+func GetToolsOf[T Tool]() ToolList[T] {
+	var tools ToolList[T]
+	for _, tool := range availableTools {
+		if casted, ok := tool.(T); ok {
+			tools = append(tools, casted)
+		}
+	}
+	return tools
+}
+
+type ToolConfig struct {
+	// Path to the tool directory
+	ToolDirectory string
+
+	InputWasDirectory bool
+
+	// The minimum version of Shopwell that is supported
+	MinShopwellVersion string
+	// The maximum version of Shopwell that is supported
+	MaxShopwellVersion string
+	// The version of Shopwell that is checked against
+	CheckAgainst string
+	// The root directory of the extension/project
+	RootDir string
+	// Contains a list of directories that are considered as source code
+	SourceDirectories []string
+	// Contains a list of identifiers that are ignored
+	ValidationIgnores []validation.ToolConfigIgnore
+	// Contains a list of directories that are considered as admin code
+	AdminDirectories []string
+	// Contains a list of directories that are considered as storefront code
+	StorefrontDirectories []string
+
+	Extension extension.Extension
+}
+
+type Tool interface {
+	Name() string
+}
+
+type CheckTool interface {
+	Tool
+	Check(ctx context.Context, check *Check, config ToolConfig) error
+}
+
+type FixTool interface {
+	Tool
+	Fix(ctx context.Context, config ToolConfig) error
+}
+
+type FormatTool interface {
+	Tool
+	Format(ctx context.Context, config ToolConfig, dryRun bool) error
+}
+
+func canonicalToolName(name string) string {
+	if name == "sw-cli" {
+		return "builtin"
+	}
+
+	return name
+}
+
+// WarnOnDeprecatedToolName reports use of the legacy built-in checker name.
+func WarnOnDeprecatedToolName(ctx context.Context, values ...string) {
+	for _, value := range values {
+		for _, name := range strings.Split(value, ",") {
+			if strings.TrimSpace(name) == "sw-cli" {
+				logging.FromContext(ctx).Warnf("The tool name %q is deprecated as input; use %q instead", "sw-cli", "builtin")
+				return
+			}
+		}
+	}
+}
+
+func (tl ToolList[T]) Only(only string) (ToolList[T], error) {
+	if only == "" {
+		return tl, nil
+	}
+
+	var filteredTools ToolList[T]
+	requestedTools := strings.Split(only, ",")
+	seen := make(map[string]bool, len(requestedTools))
+
+	for _, requestedTool := range requestedTools {
+		requestedTool = canonicalToolName(strings.TrimSpace(requestedTool))
+		found := false
+
+		for _, t := range tl {
+			if t.Name() == requestedTool {
+				if !seen[requestedTool] {
+					filteredTools = append(filteredTools, t)
+					seen[requestedTool] = true
+				}
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return nil, fmt.Errorf("tool with name %q not found, possible tools: %s", requestedTool, tl.PossibleString())
+		}
+	}
+
+	return filteredTools, nil
+}
+
+// Exclude filters out tools listed in the comma-separated exclude string.
+// Returns an error if any specified tool name does not exist in the current list.
+func (tl ToolList[T]) Exclude(exclude string) (ToolList[T], error) {
+	if exclude == "" {
+		return tl, nil
+	}
+
+	names := strings.Split(exclude, ",")
+	for i, name := range names {
+		name = canonicalToolName(strings.TrimSpace(name))
+		names[i] = name
+		if name == "" {
+			continue
+		}
+		if !slices.ContainsFunc(tl, func(tool T) bool { return tool.Name() == name }) {
+			return nil, fmt.Errorf("tool with name %q not found in the selected tools: %s (--exclude only removes selected tools)", name, tl.PossibleString())
+		}
+	}
+
+	var filtered ToolList[T]
+	for _, t := range tl {
+		if !slices.Contains(names, t.Name()) {
+			filtered = append(filtered, t)
+		}
+	}
+
+	return filtered, nil
+}
+
+func (tl ToolList[T]) PossibleString() string {
+	var possibleTools []string
+	for _, t := range tl {
+		possibleTools = append(possibleTools, t.Name())
+	}
+
+	return strings.Join(possibleTools, ",")
+}

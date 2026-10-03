@@ -1,0 +1,232 @@
+package verifier
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/shyim/go-version"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/extension"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/validation"
+	"github.com/shopwell-shop/shopwell-cli/logging"
+)
+
+func IsProject(root string) bool {
+	composerJson := path.Join(root, "composer.json")
+
+	if _, err := os.Stat(composerJson); os.IsNotExist(err) {
+		return false
+	}
+
+	var composerJsonData struct {
+		Type string `json:"type"`
+	}
+
+	file, err := os.Open(composerJson)
+	if err != nil {
+		return false
+	}
+
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = fmt.Errorf("failed to close composer.json: %w", closeErr)
+		}
+	}()
+
+	if err := json.NewDecoder(file).Decode(&composerJsonData); err != nil {
+		return false
+	}
+
+	return composerJsonData.Type == "project"
+}
+
+func getShopwellConstraint(root string) (*version.Constraints, error) {
+	composerJson := path.Join(root, "composer.json")
+
+	file, err := os.Open(composerJson)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = fmt.Errorf("failed to close composer.json: %w", closeErr)
+		}
+	}()
+
+	var composerJsonData struct {
+		Require struct {
+			Shopwell string `json:"shopwell/core"`
+		} `json:"require"`
+	}
+
+	if err := json.NewDecoder(file).Decode(&composerJsonData); err != nil {
+		return nil, err
+	}
+
+	if composerJsonData.Require.Shopwell == "" {
+		return nil, errors.New("shopwell/core is not required")
+	}
+
+	cst, err := version.NewConstraint(composerJsonData.Require.Shopwell)
+	if err != nil {
+		return nil, err
+	}
+
+	return &cst, nil
+}
+
+func GetConfigFromProject(ctx context.Context, root string, onlyLocal bool) (*ToolConfig, error) {
+	constraint, err := getShopwellConstraint(root)
+	if err != nil {
+		return nil, err
+	}
+
+	extensions := extension.FindExtensionsFromProject(ctx, root, onlyLocal)
+
+	sourceDirectories := []string{}
+	adminDirectories := []string{}
+	storefrontDirectories := []string{}
+
+	vendorPath := path.Join(root, "vendor")
+
+	actualProjectConfigPath := shop.SearchConfigPath(ctx, root, "")
+	shopCfg, err := shop.ReadConfig(ctx, actualProjectConfigPath, true)
+	if err != nil {
+		return nil, err
+	}
+
+	excludeExtensions := []string{}
+
+	if shopCfg.Validation != nil {
+		for _, ignore := range shopCfg.Validation.IgnoreExtensions {
+			excludeExtensions = append(excludeExtensions, ignore.Name)
+		}
+	}
+
+	for _, ext := range extensions {
+		extName, err := ext.GetName()
+		if err != nil {
+			return nil, err
+		}
+
+		rootDir := ext.GetRootDir()
+
+		resolvedPath, err := filepath.EvalSymlinks(rootDir)
+		if err == nil {
+			rootDir = resolvedPath
+		}
+
+		// Skip plugins in vendor folder
+		if strings.HasPrefix(rootDir, vendorPath) || slices.Contains(excludeExtensions, extName) {
+			continue
+		}
+
+		sourceDirectories = append(sourceDirectories, ext.GetSourceDirs()...)
+		adminDirectories = append(adminDirectories, getAdminFolders(ext)...)
+		storefrontDirectories = append(storefrontDirectories, getStorefrontFolders(ext)...)
+	}
+
+	var rootComposerJsonData rootComposerJson
+
+	rootComposerJsonPath := path.Join(root, "composer.json")
+
+	file, err := os.Open(rootComposerJsonPath)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			err = fmt.Errorf("failed to close composer.json: %w", closeErr)
+		}
+	}()
+
+	if err := json.NewDecoder(file).Decode(&rootComposerJsonData); err != nil {
+		return nil, err
+	}
+
+	// Deprecated: Loading bundles from composer.json extra.shopwell-bundles is deprecated.
+	// Use the build.bundles section in .config/shopwell-project.yml instead.
+	seenBundlePaths := make(map[string]bool)
+	for bundlePath := range rootComposerJsonData.Extra.Bundles {
+		logging.FromContext(ctx).Warnf("Deprecation: Bundle %q is configured via composer.json extra.shopwell-bundles. Please move it to the build.bundles section in %s instead.", bundlePath, shopCfg.GetStorageLocation())
+		sourceDirectories = append(sourceDirectories, path.Join(root, bundlePath))
+
+		expectedAdminPath := path.Join(root, bundlePath, "Resources", "app", "administration")
+		expectedStorefrontPath := path.Join(root, bundlePath, "Resources", "app", "storefront")
+
+		if _, err := os.Stat(expectedAdminPath); err == nil {
+			adminDirectories = append(adminDirectories, expectedAdminPath)
+		}
+
+		if _, err := os.Stat(expectedStorefrontPath); err == nil {
+			storefrontDirectories = append(storefrontDirectories, expectedStorefrontPath)
+		}
+		seenBundlePaths[bundlePath] = true
+	}
+
+	for _, bundle := range shopCfg.Build.Bundles {
+		if seenBundlePaths[bundle.Path] {
+			continue
+		}
+		sourceDirectories = append(sourceDirectories, path.Join(root, bundle.Path))
+
+		expectedAdminPath := path.Join(root, bundle.Path, "Resources", "app", "administration")
+		expectedStorefrontPath := path.Join(root, bundle.Path, "Resources", "app", "storefront")
+
+		if _, err := os.Stat(expectedAdminPath); err == nil {
+			adminDirectories = append(adminDirectories, expectedAdminPath)
+		}
+
+		if _, err := os.Stat(expectedStorefrontPath); err == nil {
+			storefrontDirectories = append(storefrontDirectories, expectedStorefrontPath)
+		}
+	}
+
+	var validationIgnores []validation.ToolConfigIgnore
+
+	if shopCfg.Validation != nil {
+		for _, ignore := range shopCfg.Validation.Ignore {
+			validationIgnores = append(validationIgnores, validation.ToolConfigIgnore{
+				Identifier: ignore.Identifier,
+				Path:       ignore.Path,
+				Message:    ignore.Message,
+			})
+		}
+	}
+
+	toolCfg := &ToolConfig{
+		ToolDirectory:         GetToolDirectory(),
+		RootDir:               root,
+		SourceDirectories:     sourceDirectories,
+		AdminDirectories:      adminDirectories,
+		StorefrontDirectories: storefrontDirectories,
+		ValidationIgnores:     validationIgnores,
+	}
+
+	if err := determineVersionRange(toolCfg, constraint); err != nil {
+		return nil, err
+	}
+
+	return toolCfg, nil
+}
+
+type rootComposerJson struct {
+	Require map[string]string `json:"require"`
+	Extra   struct {
+		Bundles map[string]rootShopwellBundle `json:"shopwell-bundles"`
+	}
+}
+
+type rootShopwellBundle struct {
+	Name string `json:"name"`
+}

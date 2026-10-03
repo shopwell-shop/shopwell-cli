@@ -1,0 +1,242 @@
+package extension
+
+import (
+	"os"
+	"path"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/testhelper"
+)
+
+func TestGetShopwellProjectConstraintComposerJson(t *testing.T) {
+	testCases := []struct {
+		Name       string
+		Files      map[string]string
+		Constraint string
+		Error      string
+	}{
+		{
+			Name: "Get constraint from composer.json",
+			Files: map[string]string{
+				"composer.json": `{
+		"require": {
+			"shopwell/core": "~6.5.0"
+	}}`,
+			},
+			Constraint: "~6.5.0",
+		},
+		{
+			Name: "Get constraint from composer.lock",
+			Files: map[string]string{
+				"composer.json": `{
+		"require": {
+			"shopwell/core": "6.5.*"
+	}}`,
+				"composer.lock": `{
+		"packages": [
+{
+"name": "shopwell/core",
+"version": "6.5.0"
+}
+]}`,
+			},
+			Constraint: "6.5.*",
+		},
+		{
+			Name: "Branch installed, determine by Kernel.php",
+			Files: map[string]string{
+				"composer.json": `{
+		"require": {
+			"shopwell/core": "6.5.*"
+	}}`,
+				"composer.lock": `{
+		"packages": [
+{
+"name": "shopwell/core",
+"version": "dev-trunk"
+}
+]}`,
+				"src/Core/composer.json": `{}`,
+				"src/Core/Kernel.php": `<?php
+final public const SHOPWELL_FALLBACK_VERSION = '6.6.9999999.9999999-dev';
+`,
+			},
+			Constraint: "6.5.*",
+		},
+		{
+			Name: "Get constraint from kernel (shopwell/shopwell case)",
+			Files: map[string]string{
+				"composer.json":          `{}`,
+				"src/Core/composer.json": `{}`,
+				"src/Core/Kernel.php": `<?php
+final public const SHOPWELL_FALLBACK_VERSION = '6.6.9999999.9999999-dev';
+`,
+			},
+			Constraint: "~6.6.0",
+		},
+
+		// error cases
+		{
+			Name:  "no composer.json",
+			Files: map[string]string{},
+			Error: "could not read composer.json",
+		},
+
+		{
+			Name: "composer.json broken",
+			Files: map[string]string{
+				"composer.json": `broken`,
+			},
+			Error: "could not parse composer.json",
+		},
+
+		{
+			Name: "composer.json with no shopwell package",
+			Files: map[string]string{
+				"composer.json": `{}`,
+			},
+			Error: "missing shopwell/core requirement in composer.json",
+		},
+
+		{
+			Name: "composer.json malformed version, without lock, so we cannot fall down",
+			Files: map[string]string{
+				"composer.json": `{
+		"require": {
+			"shopwell/core": "6.5.*"
+	}}`,
+			},
+			Constraint: "6.5.*",
+		},
+
+		{
+			Name: "composer.json malformed version, lock does not contain shopwell/core",
+			Files: map[string]string{
+				"composer.json": `{
+		"require": {
+			"shopwell/core": "6.5.*"
+	}}`,
+				"composer.lock": `{"packages": []}`,
+			},
+			Constraint: "6.5.*",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			for file, content := range tc.Files {
+				testhelper.WriteFile(t, filepath.Join(tmpDir, file), content)
+			}
+
+			constraint, err := GetShopwellProjectConstraint(tmpDir)
+
+			if tc.Constraint == "" {
+				assert.NotNil(t, err)
+				assert.Contains(t, err.Error(), tc.Error)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			assert.Equal(t, tc.Constraint, constraint.String())
+		})
+	}
+}
+
+func TestFindAssetSourcesOfProjectYAMLBundles(t *testing.T) {
+	// Minimal composer.json without extra bundles
+	tmpDir := testhelper.ExtensionDir(t, testhelper.ComposerJSON{
+		Require: map[string]string{"shopwell/core": "~6.6.0"},
+	})
+
+	// Create the bundle directory
+	assert.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "src", "MyBundle"), 0o755))
+
+	shopCfg := &shop.Config{
+		Build: &shop.ConfigBuild{
+			Bundles: []shop.ConfigProjectBundle{
+				{Path: "src/MyBundle"},
+			},
+		},
+	}
+
+	sources := FindAssetSourcesOfProject(t.Context(), tmpDir, shopCfg)
+
+	names := make([]string, 0, len(sources))
+	for _, s := range sources {
+		names = append(names, s.Name)
+	}
+
+	assert.Contains(t, names, "MyBundle")
+
+	for _, s := range sources {
+		if s.Name == "MyBundle" {
+			assert.Equal(t, path.Join(tmpDir, "src", "MyBundle"), s.Path)
+		}
+	}
+}
+
+func TestFindAssetSourcesOfProjectYAMLBundleNameOverride(t *testing.T) {
+	tmpDir := testhelper.ExtensionDir(t, testhelper.ComposerJSON{
+		Require: map[string]string{"shopwell/core": "~6.6.0"},
+	})
+	assert.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "src", "MyBundle"), 0o755))
+
+	shopCfg := &shop.Config{
+		Build: &shop.ConfigBuild{
+			Bundles: []shop.ConfigProjectBundle{
+				{Path: "src/MyBundle", Name: "CustomBundleName"},
+			},
+		},
+	}
+
+	sources := FindAssetSourcesOfProject(t.Context(), tmpDir, shopCfg)
+
+	names := make([]string, 0, len(sources))
+	for _, s := range sources {
+		names = append(names, s.Name)
+	}
+
+	assert.Contains(t, names, "CustomBundleName")
+	assert.NotContains(t, names, "MyBundle")
+}
+
+func TestFindAssetSourcesOfProjectYAMLBundleDeduplication(t *testing.T) {
+	// composer.json declares the same bundle path
+	tmpDir := testhelper.ExtensionDir(t, testhelper.ComposerJSON{
+		Require: map[string]string{"shopwell/core": "~6.6.0"},
+		Extra:   map[string]any{"shopwell-bundles": map[string]any{"src/MyBundle": map[string]string{"name": "MyBundle"}}},
+	})
+	assert.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "src", "MyBundle"), 0o755))
+
+	shopCfg := &shop.Config{
+		Build: &shop.ConfigBuild{
+			Bundles: []shop.ConfigProjectBundle{
+				{Path: "src/MyBundle"},
+			},
+		},
+	}
+
+	sources := FindAssetSourcesOfProject(t.Context(), tmpDir, shopCfg)
+
+	count := 0
+	for _, s := range sources {
+		if s.Name == "MyBundle" {
+			count++
+		}
+	}
+
+	assert.Equal(t, 1, count, "bundle declared in both composer.json and YAML config should only appear once")
+}
+
+func TestFindAssetSourcesOfProjectWithoutComposerJSON(t *testing.T) {
+	sources := FindAssetSourcesOfProject(t.Context(), t.TempDir(), &shop.Config{})
+
+	assert.Empty(t, sources)
+}

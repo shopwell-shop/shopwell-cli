@@ -99,7 +99,7 @@ jobs:
         with:
           images: ghcr.io/shopwell-shop/shopwell-cli/env-bridge
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
             type=sha
 
       - name: Build and push

@@ -75,6 +75,12 @@ jobs:
                 break
               fi
             done
+
+            git -C "$plugin_dir" add -A
+            git -C "$plugin_dir" \
+              -c user.name='Shopwell CI' \
+              -c user.email='ci@shopwell.example' \
+              commit -m 'Adapt fixture for Shopwell'
           }
 
           adapt_plugin plugin

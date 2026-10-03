@@ -45,6 +45,41 @@ jobs:
           ref: '75e2013752fd4db7535e4b72b3e3e8d57e531002'
           path: 'plugin'
 
+      - name: Checkout Storefront Plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7.0.1
+        with:
+          repository: 'FriendsOfShopware/FroshPlatformFilterSearch'
+          ref: 'ff99a09371180ae57ccc29160fa1a0317e15d4e9'
+          path: 'storefront-plugin'
+
+      - name: Adapt external plugin fixtures
+        run: |
+          adapt_plugin() {
+            plugin_dir="$1"
+            plugin_class=$(jq -r '.extra | to_entries[] | select(.key | endswith("-plugin-class")) | .value' "$plugin_dir/composer.json")
+            jq --arg plugin_class "$plugin_class" '
+              .type = "shopwell-platform-plugin"
+              | .require = ((.require // {}) | with_entries(
+                  if (.key | endswith("/core")) then .key = "shopwell/core"
+                  elif (.key | endswith("/storefront")) then .key = "shopwell/storefront"
+                  else . end
+                ))
+              | .extra |= with_entries(select((.key | endswith("-plugin-class")) | not))
+              | .extra["shopwell-plugin-class"] = $plugin_class
+            ' "$plugin_dir/composer.json" > "$plugin_dir/composer.json.tmp"
+            mv "$plugin_dir/composer.json.tmp" "$plugin_dir/composer.json"
+
+            for config_file in "$plugin_dir"/.*-extension.yml; do
+              if [ -f "$config_file" ]; then
+                mv "$config_file" "$plugin_dir/.shopwell-extension.yml"
+                break
+              fi
+            done
+          }
+
+          adapt_plugin plugin
+          adapt_plugin storefront-plugin
+
       - name: Create Shopwell
         run: shopwell-cli project create shopwell 6.7.15.0 --no-audit
 
@@ -71,7 +106,8 @@ jobs:
       - name: Install a Storefront Plugin
         working-directory: shopwell
         run: |
-          composer require 'frosh/platform-filter-search:*' --no-interaction --no-scripts
+          composer config repositories.storefront-plugin path ../storefront-plugin
+          composer require 'frosh/platform-filter-search:3.1.0' --no-interaction --no-scripts
           rm -rf vendor
 
       - name: Setup the project

@@ -26,7 +26,7 @@ const (
 	notificationInterval = 24 * time.Hour
 
 	// latestReleaseURL is the primary source of truth for the latest release information, as it is maintained and updated with each new release.
-	latestReleaseURL = "https://shopwell.github.io/shopwell-cli/version.json"
+	latestReleaseURL = "https://shopwell-shop.github.io/shopwell-cli/version.json"
 	repositoryURL    = "https://github.com/shopwell-shop/shopwell-cli"
 
 	// noUpdateNotificationEnv can be set to "true" by the user to disable update notifications.

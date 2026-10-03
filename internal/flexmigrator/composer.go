@@ -62,10 +62,10 @@ func MigrateComposerJson(project string) error {
 		})
 	}
 
-	if !composerJson.Repositories.HasRepository("https://shopwell.github.io/conflicts/") {
+	if !composerJson.Repositories.HasRepository("https://shopwell-shop.github.io/conflicts/") {
 		composerJson.Repositories = append(composerJson.Repositories, composer.Repository{
 			Type: "composer",
-			URL:  "https://shopwell.github.io/conflicts/",
+			URL:  "https://shopwell-shop.github.io/conflicts/",
 		})
 	}
 

@@ -53,7 +53,7 @@ func TestGenerateComposerJson(t *testing.T) {
 
 		found := false
 		for _, repo := range data.Repositories {
-			if repo.Type == "composer" && repo.URL == "https://shopwell.github.io/conflicts/" {
+			if repo.Type == "composer" && repo.URL == "https://shopwell-shop.github.io/conflicts/" {
 				found = true
 			}
 		}

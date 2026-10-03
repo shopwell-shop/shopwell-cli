@@ -12,7 +12,7 @@ import (
 
 const (
 	// ConfigSchemaURL is the JSON Schema URL used by the YAML language server.
-	ConfigSchemaURL = "https://shopwell.github.io/shopwell-cli/shopwell-extension-schema.json"
+	ConfigSchemaURL = "https://shopwell-shop.github.io/shopwell-cli/shopwell-extension-schema.json"
 )
 
 var ConfigLocations = []string{

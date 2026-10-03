@@ -166,7 +166,7 @@ func GenerateComposerJson(ctx context.Context, opts ComposerJsonOptions) (string
 
 	repo4 := newOrderedMap()
 	repo4.set("type", "composer")
-	repo4.set("url", "https://shopwell.github.io/conflicts/")
+	repo4.set("url", "https://shopwell-shop.github.io/conflicts/")
 
 	composer.set("repositories", []*orderedMap{repo1, repo2, repo3, repo4})
 	psr4 := newOrderedMap()

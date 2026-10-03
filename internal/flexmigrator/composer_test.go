@@ -91,7 +91,7 @@ func TestMigrateComposerJson(t *testing.T) {
 		// Verify repository configuration
 		assert.True(t, migratedComposer.Repositories.HasRepository("custom/plugins/*"))
 		assert.True(t, migratedComposer.Repositories.HasRepository("custom/plugins/*/packages/*"))
-		assert.True(t, migratedComposer.Repositories.HasRepository("https://shopwell.github.io/conflicts/"))
+		assert.True(t, migratedComposer.Repositories.HasRepository("https://shopwell-shop.github.io/conflicts/"))
 
 		// Verify scripts configuration
 		autoScripts, ok := migratedComposer.Scripts["auto-scripts"].(map[string]interface{})
@@ -119,7 +119,7 @@ func TestMigrateComposerJson(t *testing.T) {
 			Repositories: composer.Repositories{
 				{
 					Type: "composer",
-					URL:  "https://shopwell.github.io/conflicts/",
+					URL:  "https://shopwell-shop.github.io/conflicts/",
 				},
 			},
 			Config: map[string]any{
@@ -141,7 +141,7 @@ func TestMigrateComposerJson(t *testing.T) {
 
 		count := 0
 		for _, repo := range migratedComposer.Repositories {
-			if repo.URL == "https://shopwell.github.io/conflicts/" {
+			if repo.URL == "https://shopwell-shop.github.io/conflicts/" {
 				count++
 			}
 		}

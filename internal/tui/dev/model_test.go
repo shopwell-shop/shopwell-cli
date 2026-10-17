@@ -255,7 +255,7 @@ func TestUpdateKeyPress_PhaseInstallFailed_RestartRunsFullInstall(t *testing.T) 
 		showLogs:    true,
 		failure:     &installFailure{category: installFailureMigration},
 	}
-	m.install.language = "de-DE"
+	m.install.language = "zh-CN"
 	m.install.currency = "EUR"
 	m.install.SetUsername("admin")
 	m.install.SetPassword("shopwell")
@@ -272,7 +272,7 @@ func TestUpdateKeyPress_PhaseInstallFailed_RestartRunsFullInstall(t *testing.T) 
 	assert.Equal(t, installFailureActionRestart, final.installProg.action)
 	assert.NotNil(t, final.dockerOutChan)
 	assert.NotNil(t, cmd)
-	assert.Equal(t, "de-DE", final.install.language)
+	assert.Equal(t, "zh-CN", final.install.language)
 	assert.Equal(t, "admin", final.install.Username())
 }
 

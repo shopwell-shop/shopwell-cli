@@ -61,7 +61,7 @@ func TestAllRunning(t *testing.T) {
 func TestRunShopwellInstall_AttachesCredentials(t *testing.T) {
 	wizard := installWizard{
 		CredentialStep: newInstallCredentialStep(),
-		language:       "de-DE",
+		language:       "zh-CN",
 		currency:       "CHF",
 	}
 	wizard.SetUsername("admin")
@@ -74,7 +74,7 @@ func TestRunShopwellInstall_AttachesCredentials(t *testing.T) {
 	cmds[1]()
 
 	assert.Equal(t, []map[string]string{{
-		"INSTALL_LOCALE":         "de-DE",
+		"INSTALL_LOCALE":         "zh-CN",
 		"INSTALL_CURRENCY":       "CHF",
 		"INSTALL_ADMIN_USERNAME": "admin",
 		"INSTALL_ADMIN_PASSWORD": "secret-password",

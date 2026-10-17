@@ -36,12 +36,12 @@ func TestInstallTagsNeverContainCredentialValues(t *testing.T) {
 	tel := newTelemetryState(true)
 	tel.beginInstall()
 
-	w := installWizard{CredentialStep: newInstallCredentialStep(), step: installStepCredentials, language: "de-DE", currency: "EUR"}
+	w := installWizard{CredentialStep: newInstallCredentialStep(), step: installStepCredentials, language: "zh-CN", currency: "EUR"}
 	w.SetUsername("hidden-admin-name")
 	w.SetPassword("super-secret-password")
 	tags := tel.installTags("success", w)
 
-	assert.Equal(t, "de-DE", tags["language"])
+	assert.Equal(t, "zh-CN", tags["language"])
 	assert.Equal(t, "EUR", tags["currency"])
 	assert.Equal(t, "true", tags["custom_credentials"])
 	assert.Contains(t, tags, "duration_ms")
@@ -239,7 +239,7 @@ func TestNilTelemetryStateIsSafe(t *testing.T) {
 
 func TestInstallFailureTags(t *testing.T) {
 	tel := &telemetryState{}
-	w := installWizard{language: "de-DE", currency: "EUR"}
+	w := installWizard{language: "zh-CN", currency: "EUR"}
 
 	f := installFailure{
 		failingStep: installStartStep,
@@ -250,7 +250,7 @@ func TestInstallFailureTags(t *testing.T) {
 	assert.Equal(t, tracking.ResultFailure, tags[tracking.TagResult])
 	assert.Equal(t, installStartStep, tags[tracking.TagFailedStep])
 	assert.Equal(t, "db_connection", tags[tracking.TagFailureCategory])
-	assert.Equal(t, "de-DE", tags[tracking.TagLanguage])
+	assert.Equal(t, "zh-CN", tags[tracking.TagLanguage])
 }
 
 // The failure event must never carry secret-like strings: only the closed-enum

@@ -102,11 +102,11 @@ func TestInstallStepLanguage_CursorClampedAtBounds(t *testing.T) {
 func TestInstallStepLanguage_EnterSelectsLanguageAdvancesToCurrency(t *testing.T) {
 	m := newTestInstallModel()
 	m.install.step = installStepLanguage
-	m.install.cursor = 2 // de-DE
+	m.install.cursor = 2 // zh-CN
 
 	updated, _ := m.updateInstallPrompt(enterKey())
 	mm := updated.(Model)
-	assert.Equal(t, "de-DE", mm.install.language)
+	assert.Equal(t, "zh-CN", mm.install.language)
 	assert.Equal(t, installStepCurrency, mm.install.step)
 	assert.Equal(t, 0, mm.install.cursor)
 }

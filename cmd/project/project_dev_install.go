@@ -53,7 +53,7 @@ func init() {
 	projectDevCmd.AddCommand(projectDevInstallCmd)
 
 	flags := projectDevInstallCmd.Flags()
-	flags.String("locale", install.DefaultLocale, "Default storefront language (e.g. en-GB, de-DE)")
+	flags.String("locale", install.DefaultLocale, "Default storefront language (e.g. en-GB, zh-CN)")
 	flags.String("currency", install.DefaultCurrency, "Default currency (e.g. EUR, USD)")
 	flags.String("admin-username", install.DefaultAdminUsername, "Admin account username")
 	flags.String("admin-password", install.DefaultAdminPassword, "Admin account password (at least 8 characters)")

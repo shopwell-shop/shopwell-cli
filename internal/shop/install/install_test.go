@@ -90,16 +90,16 @@ func TestApplyDefaults(t *testing.T) {
 		AdminPassword: "shopwell",
 	}, opts)
 
-	opts = Options{Locale: "de-DE", Currency: "CHF", AdminUsername: "boss", AdminPassword: "secret123"}
+	opts = Options{Locale: "zh-CN", Currency: "CHF", AdminUsername: "boss", AdminPassword: "secret123"}
 	opts.ApplyDefaults()
-	assert.Equal(t, "de-DE", opts.Locale)
+	assert.Equal(t, "zh-CN", opts.Locale)
 	assert.Equal(t, "CHF", opts.Currency)
 	assert.Equal(t, "boss", opts.AdminUsername)
 	assert.Equal(t, "secret123", opts.AdminPassword)
 }
 
 func TestValidate(t *testing.T) {
-	valid := Options{Locale: "de-DE", Currency: "EUR", AdminUsername: "admin", AdminPassword: "shopwell"}
+	valid := Options{Locale: "zh-CN", Currency: "EUR", AdminUsername: "admin", AdminPassword: "shopwell"}
 
 	cases := []struct {
 		name    string
@@ -210,7 +210,7 @@ func TestRunPassesEnvAndStreamsLines(t *testing.T) {
 
 	var lines []string
 	err := Run(t.Context(), fake, Options{
-		Locale:        "de-DE",
+		Locale:        "zh-CN",
 		Currency:      "CHF",
 		AdminUsername: "boss",
 		AdminPassword: "secret123",
@@ -218,7 +218,7 @@ func TestRunPassesEnvAndStreamsLines(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{
-		"INSTALL_LOCALE":         "de-DE",
+		"INSTALL_LOCALE":         "zh-CN",
 		"INSTALL_CURRENCY":       "CHF",
 		"INSTALL_ADMIN_USERNAME": "boss",
 		"INSTALL_ADMIN_PASSWORD": "secret123",

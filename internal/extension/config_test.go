@@ -149,31 +149,31 @@ func TestConfigValidationList_Identifiers(t *testing.T) {
 	})
 }
 
-func TestConfigStore_IsInGermanStore(t *testing.T) {
+func TestConfigStore_IsInChineseStore(t *testing.T) {
 	t.Run("returns true when availabilities is nil", func(t *testing.T) {
 		store := ConfigStore{
 			Availabilities: nil,
 		}
 
-		assert.True(t, store.IsInGermanStore())
+		assert.True(t, store.IsInChineseStore())
 	})
 
-	t.Run("returns true when German is in availabilities", func(t *testing.T) {
-		availabilities := []string{"German", "International"}
+	t.Run("returns true when Chinese is in availabilities", func(t *testing.T) {
+		availabilities := []string{"Chinese", "International"}
 		store := ConfigStore{
 			Availabilities: &availabilities,
 		}
 
-		assert.True(t, store.IsInGermanStore())
+		assert.True(t, store.IsInChineseStore())
 	})
 
-	t.Run("returns false when German is not in availabilities", func(t *testing.T) {
+	t.Run("returns false when Chinese is not in availabilities", func(t *testing.T) {
 		availabilities := []string{"International"}
 		store := ConfigStore{
 			Availabilities: &availabilities,
 		}
 
-		assert.False(t, store.IsInGermanStore())
+		assert.False(t, store.IsInChineseStore())
 	})
 
 	t.Run("returns false for empty availabilities", func(t *testing.T) {
@@ -182,7 +182,7 @@ func TestConfigStore_IsInGermanStore(t *testing.T) {
 			Availabilities: &availabilities,
 		}
 
-		assert.False(t, store.IsInGermanStore())
+		assert.False(t, store.IsInChineseStore())
 	})
 }
 
@@ -192,7 +192,7 @@ store:
   demo_shops:
     - type: frontend
       link: https://demo.example.com
-      localization: de_DE
+      localization: zh_CN
       login_name: demo
       login_password: secret
     - type: backend
@@ -212,7 +212,7 @@ store:
 		{
 			Type:          "frontend",
 			Link:          "https://demo.example.com",
-			Localization:  "de_DE",
+			Localization:  "zh_CN",
 			LoginName:     "demo",
 			LoginPassword: "secret",
 		},
@@ -409,18 +409,18 @@ func TestValidateExtensionConfig(t *testing.T) {
 		assert.Contains(t, err.Error(), "tags.en")
 	})
 
-	t.Run("fails when German tags exceed 5", func(t *testing.T) {
+	t.Run("fails when Chinese tags exceed 5", func(t *testing.T) {
 		tags := []string{"tag1", "tag2", "tag3", "tag4", "tag5", "tag6"}
 		config := &Config{
 			Store: ConfigStore{
 				Tags: ConfigTranslated[[]string]{
-					German: &tags,
+					Chinese: &tags,
 				},
 			},
 		}
 		err := validateExtensionConfig(config)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "tags.de")
+		assert.Contains(t, err.Error(), "tags.zh")
 	})
 
 	t.Run("fails when English videos exceed 2", func(t *testing.T) {
@@ -437,18 +437,18 @@ func TestValidateExtensionConfig(t *testing.T) {
 		assert.Contains(t, err.Error(), "videos.en")
 	})
 
-	t.Run("fails when German videos exceed 2", func(t *testing.T) {
+	t.Run("fails when Chinese videos exceed 2", func(t *testing.T) {
 		videos := []string{"vid1", "vid2", "vid3"}
 		config := &Config{
 			Store: ConfigStore{
 				Videos: ConfigTranslated[[]string]{
-					German: &videos,
+					Chinese: &videos,
 				},
 			},
 		}
 		err := validateExtensionConfig(config)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "videos.de")
+		assert.Contains(t, err.Error(), "videos.zh")
 	})
 
 	t.Run("passes when tags and videos are within limits", func(t *testing.T) {
@@ -458,11 +458,11 @@ func TestValidateExtensionConfig(t *testing.T) {
 			Store: ConfigStore{
 				Tags: ConfigTranslated[[]string]{
 					English: &tags,
-					German:  &tags,
+					Chinese: &tags,
 				},
 				Videos: ConfigTranslated[[]string]{
 					English: &videos,
-					German:  &videos,
+					Chinese: &videos,
 				},
 			},
 		}

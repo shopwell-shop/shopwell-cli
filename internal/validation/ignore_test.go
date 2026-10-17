@@ -20,7 +20,7 @@ func TestIgnoreMatches(t *testing.T) {
 	testCases := []testCase{
 		{
 			name:   "identifier only",
-			result: CheckResult{Identifier: "metadata.description.length.de-DE"},
+			result: CheckResult{Identifier: "metadata.description.length.zh-CN"},
 			ignore: ToolConfigIgnore{Identifier: "metadata.description"},
 			pathMatches: func(_, _ string) bool {
 				return false
@@ -29,7 +29,7 @@ func TestIgnoreMatches(t *testing.T) {
 		},
 		{
 			name:   "identifier only metadata label",
-			result: CheckResult{Identifier: "metadata.label.translation.de-DE"},
+			result: CheckResult{Identifier: "metadata.label.translation.zh-CN"},
 			ignore: ToolConfigIgnore{Identifier: "metadata.label"},
 			pathMatches: func(_, _ string) bool {
 				return false
@@ -38,7 +38,7 @@ func TestIgnoreMatches(t *testing.T) {
 		},
 		{
 			name:   "identifier only does not match similar metadata description prefix",
-			result: CheckResult{Identifier: "metadata.descriptionx.length.de-DE"},
+			result: CheckResult{Identifier: "metadata.descriptionx.length.zh-CN"},
 			ignore: ToolConfigIgnore{Identifier: "metadata.description"},
 			pathMatches: func(_, _ string) bool {
 				return false
@@ -47,7 +47,7 @@ func TestIgnoreMatches(t *testing.T) {
 		},
 		{
 			name:   "identifier only does not match similar metadata label prefix",
-			result: CheckResult{Identifier: "metadata.labeling.translation.de-DE"},
+			result: CheckResult{Identifier: "metadata.labeling.translation.zh-CN"},
 			ignore: ToolConfigIgnore{Identifier: "metadata.label"},
 			pathMatches: func(_, _ string) bool {
 				return false

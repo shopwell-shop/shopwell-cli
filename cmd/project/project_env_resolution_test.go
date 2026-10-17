@@ -23,7 +23,7 @@ func writeMinimalPlugin(t *testing.T) string {
 		Version:     "1.0.0",
 		Require:     map[string]string{"shopwell/core": "~6.6.0"},
 		PluginClass: `FroshTest\FroshTest`,
-		Label:       map[string]string{"de-DE": "Test", "en-GB": "Test"},
+		Label:       map[string]string{"zh-CN": "Test", "en-GB": "Test"},
 		Psr4:        map[string]string{`FroshTest\`: "src/"},
 	}.String())
 	testhelper.WriteFile(t, filepath.Join(dir, ".shopwell-extension.yml"), `build:

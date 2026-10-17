@@ -31,9 +31,9 @@ func PushExtensionStoreInfo(ctx context.Context, producer ProducerAPI, zipExt ex
 	metadata := zipExt.GetMetaData()
 
 	for _, info := range storeExt.Infos {
-		if strings.HasPrefix(info.Locale.Name, "de") {
-			info.Name = metadata.Label.German
-			info.ShortDescription = metadata.Description.German
+		if strings.HasPrefix(info.Locale.Name, "zh") {
+			info.Name = metadata.Label.Chinese
+			info.ShortDescription = metadata.Description.Chinese
 		} else {
 			info.Name = metadata.Label.English
 			info.ShortDescription = metadata.Description.English
@@ -85,8 +85,8 @@ func PushExtensionStoreInfo(ctx context.Context, producer ProducerAPI, zipExt ex
 					}
 
 					apiImage.Priority = configImage.GetPosition()
-					apiImage.Details[0].Activated = configImage.Activate.German
-					apiImage.Details[0].Preview = configImage.Preview.German
+					apiImage.Details[0].Activated = configImage.Activate.Chinese
+					apiImage.Details[0].Preview = configImage.Preview.Chinese
 
 					apiImage.Details[1].Activated = configImage.Activate.English
 					apiImage.Details[1].Preview = configImage.Preview.English
@@ -277,8 +277,8 @@ func findLocale(name string, locales []Locale) (*Locale, error) {
 
 func getTranslation[T any](language string, config extension.ConfigTranslated[T]) *T {
 	switch language {
-	case "de":
-		return config.German
+	case "zh":
+		return config.Chinese
 	case "en":
 		return config.English
 	}
@@ -286,12 +286,12 @@ func getTranslation[T any](language string, config extension.ConfigTranslated[T]
 	return nil
 }
 
-// languageFromLocale extracts the language code from a locale name like "de_DE" without assuming
+// languageFromLocale extracts the language code from a locale name like "zh_CN" without assuming
 // a minimum length.
 func languageFromLocale(localeName string) string {
 	switch {
-	case strings.HasPrefix(localeName, "de"):
-		return "de"
+	case strings.HasPrefix(localeName, "zh"):
+		return "zh"
 	case strings.HasPrefix(localeName, "en"):
 		return "en"
 	}
@@ -342,11 +342,11 @@ func parseInlineablePath(path, extensionDir string) (string, error) {
 	return html, nil
 }
 
-// uploadImagesByDirectory uploads all images of the given language directory (index 0 is german,
+// uploadImagesByDirectory uploads all images of the given language directory (index 0 is chinese,
 // 1 is english, defined by the account api) and derives the priority from the file name.
 func uploadImagesByDirectory(ctx context.Context, producer ProducerAPI, extensionId int, directory string, index int) error {
 	if index == 0 {
-		directory = path.Join(directory, "de")
+		directory = path.Join(directory, "zh")
 	} else {
 		directory = path.Join(directory, "en")
 	}

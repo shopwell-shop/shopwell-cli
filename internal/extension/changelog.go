@@ -93,14 +93,14 @@ func parseExtensionMarkdownChangelog(ext Extension) (*ExtensionChangelog, error)
 		return nil, errors.New("english changelog is missing")
 	}
 
-	changelogDe, ok := changelogs["de-DE"]
+	changelogZh, ok := changelogs["zh-CN"]
 	if !ok {
-		changelogDe = changelogEn
+		changelogZh = changelogEn
 	}
 
-	changelogDeVersion, ok := changelogDe[v.String()]
+	changelogZhVersion, ok := changelogZh[v.String()]
 	if !ok {
-		return nil, fmt.Errorf("german changelog in version %s is missing", v.String())
+		return nil, fmt.Errorf("chinese changelog in version %s is missing", v.String())
 	}
 
 	allChangelogsInVersion := make(map[string]string)
@@ -114,5 +114,5 @@ func parseExtensionMarkdownChangelog(ext Extension) (*ExtensionChangelog, error)
 		allChangelogsInVersion[key] = changelogVersion
 	}
 
-	return &ExtensionChangelog{German: changelogDeVersion, English: changelogEnVersion, Changelogs: allChangelogsInVersion}, nil
+	return &ExtensionChangelog{Chinese: changelogZhVersion, English: changelogEnVersion, Changelogs: allChangelogsInVersion}, nil
 }

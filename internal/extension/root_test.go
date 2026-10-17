@@ -36,11 +36,11 @@ func TestGetExtensionByFolder_DetectsPlatformPlugin(t *testing.T) {
 		Require:     map[string]string{"shopwell/core": "~6.5.0"},
 		Psr4:        map[string]string{`Test\TestPlugin\`: "src/"},
 		PluginClass: `Test\TestPlugin\TestPlugin`,
-		Label:       map[string]string{"de-DE": "Test Plugin", "en-GB": "Test Plugin"},
+		Label:       map[string]string{"zh-CN": "Test Plugin", "en-GB": "Test Plugin"},
 		Extra: map[string]any{
-			"description":      map[string]string{"de-DE": "Ein Test Plugin", "en-GB": "A test plugin"},
-			"manufacturerLink": map[string]string{"de-DE": "https://example.com", "en-GB": "https://example.com"},
-			"supportLink":      map[string]string{"de-DE": "https://example.com/support", "en-GB": "https://example.com/support"},
+			"description":      map[string]string{"zh-CN": "一个测试插件", "en-GB": "A test plugin"},
+			"manufacturerLink": map[string]string{"zh-CN": "https://example.com", "en-GB": "https://example.com"},
+			"supportLink":      map[string]string{"zh-CN": "https://example.com/support", "en-GB": "https://example.com/support"},
 		},
 	})
 
@@ -121,9 +121,9 @@ func TestUpdateMetaData_PlatformPlugin(t *testing.T) {
 		Require:     map[string]string{"shopwell/core": "~6.5.0"},
 		Psr4:        map[string]string{`Test\TestPlugin\`: "src/"},
 		PluginClass: `Test\TestPlugin\TestPlugin`,
-		Label:       map[string]string{"de-DE": "Altes Label DE", "en-GB": "Old Label EN"},
+		Label:       map[string]string{"zh-CN": "旧标签", "en-GB": "Old Label EN"},
 		Extra: map[string]any{
-			"description": map[string]string{"de-DE": "Alte Beschreibung", "en-GB": "Old description"},
+			"description": map[string]string{"zh-CN": "旧描述", "en-GB": "Old description"},
 		},
 	})
 
@@ -132,11 +132,11 @@ func TestUpdateMetaData_PlatformPlugin(t *testing.T) {
 
 	err = ext.UpdateMetaData(&ExtensionMetadata{
 		Label: ExtensionTranslated{
-			German:  "Neues Label DE",
+			Chinese: "新标签",
 			English: "New Label EN",
 		},
 		Description: ExtensionTranslated{
-			German:  "Neue Beschreibung",
+			Chinese: "新描述",
 			English: "New description",
 		},
 	})
@@ -147,9 +147,9 @@ func TestUpdateMetaData_PlatformPlugin(t *testing.T) {
 	require.NoError(t, err)
 
 	meta := ext2.GetMetaData()
-	assert.Equal(t, "Neues Label DE", meta.Label.German)
+	assert.Equal(t, "新标签", meta.Label.Chinese)
 	assert.Equal(t, "New Label EN", meta.Label.English)
-	assert.Equal(t, "Neue Beschreibung", meta.Description.German)
+	assert.Equal(t, "新描述", meta.Description.Chinese)
 	assert.Equal(t, "New description", meta.Description.English)
 }
 
@@ -161,10 +161,10 @@ func TestUpdateMetaData_App(t *testing.T) {
     <meta>
         <name>TestApp</name>
         <label>Old Label EN</label>
-        <label lang="de-DE">Altes Label DE</label>
+        <label lang="zh-CN">旧标签</label>
         <future-label-metadata>keep</future-label-metadata>
         <description>Old description</description>
-        <description lang="de-DE">Alte Beschreibung</description>
+        <description lang="zh-CN">旧描述</description>
         <author>Test Author</author>
         <copyright>(c) Test</copyright>
         <version>1.0.0</version>
@@ -178,11 +178,11 @@ func TestUpdateMetaData_App(t *testing.T) {
 
 	err = ext.UpdateMetaData(&ExtensionMetadata{
 		Label: ExtensionTranslated{
-			German:  "Neues Label DE",
+			Chinese: "新标签",
 			English: "New Label EN",
 		},
 		Description: ExtensionTranslated{
-			German:  "Neue Beschreibung",
+			Chinese: "新描述",
 			English: "New description",
 		},
 	})
@@ -193,9 +193,9 @@ func TestUpdateMetaData_App(t *testing.T) {
 	require.NoError(t, err)
 
 	meta := ext2.GetMetaData()
-	assert.Equal(t, "Neues Label DE", meta.Label.German)
+	assert.Equal(t, "新标签", meta.Label.Chinese)
 	assert.Equal(t, "New Label EN", meta.Label.English)
-	assert.Equal(t, "Neue Beschreibung", meta.Description.German)
+	assert.Equal(t, "新描述", meta.Description.Chinese)
 	assert.Equal(t, "New description", meta.Description.English)
 
 	manifestBytes, err := os.ReadFile(filepath.Join(tmpDir, "manifest.xml"))

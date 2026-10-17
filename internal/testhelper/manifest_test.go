@@ -40,7 +40,7 @@ func TestNewAppManifestRendersCompleteMeta(t *testing.T) {
 	assert.Equal(t, "MyExampleApp", doc.Meta.Name)
 	// The default language entry must come before translations.
 	assert.Equal(t, []string{"Label", "Name"}, doc.Meta.Labels)
-	assert.Equal(t, []string{"A description", "Eine Beschreibung"}, doc.Meta.Descriptions)
+	assert.Equal(t, []string{"A description", "示例描述"}, doc.Meta.Descriptions)
 	assert.Equal(t, "Your Company Ltd.", doc.Meta.Author)
 	assert.Equal(t, "(c) by Your Company Ltd.", doc.Meta.Copyright)
 	assert.Equal(t, "1.0.0", doc.Meta.Version)

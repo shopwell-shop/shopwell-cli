@@ -4,7 +4,7 @@ import "strings"
 
 // IdentifierMatches reports whether a result identifier is covered by an ignore
 // identifier. An ignore of "metadata.description" matches that exact identifier
-// and any more specific child such as "metadata.description.length.de-DE".
+// and any more specific child such as "metadata.description.length.zh-CN".
 func IdentifierMatches(resultIdentifier, ignoreIdentifier string) bool {
 	if ignoreIdentifier == "" {
 		return false

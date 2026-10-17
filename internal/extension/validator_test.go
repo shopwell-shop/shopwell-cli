@@ -20,7 +20,7 @@ func getAppForValidation() App {
 					struct {
 						Value string "xml:\",chardata\""
 						Lang  string "xml:\"lang,attr,omitempty\""
-					}{"BLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAA", "de-DE"},
+					}{"BLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAA", "zh-CN"},
 					struct {
 						Value string "xml:\",chardata\""
 						Lang  string "xml:\"lang,attr,omitempty\""
@@ -30,7 +30,7 @@ func getAppForValidation() App {
 					struct {
 						Value string "xml:\",chardata\""
 						Lang  string "xml:\"lang,attr,omitempty\""
-					}{"BLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAA", "de-DE"},
+					}{"BLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAABLAAAAAA", "zh-CN"},
 					struct {
 						Value string "xml:\",chardata\""
 						Lang  string "xml:\"lang,attr,omitempty\""
@@ -86,7 +86,7 @@ func TestDescriptionLengthCountedInCharacters(t *testing.T) {
 		struct {
 			Value string "xml:\",chardata\""
 			Lang  string "xml:\"lang,attr,omitempty\""
-		}{multibyte, "de-DE"},
+		}{multibyte, "zh-CN"},
 		struct {
 			Value string "xml:\",chardata\""
 			Lang  string "xml:\"lang,attr,omitempty\""
@@ -107,7 +107,7 @@ func TestDescriptionTooLongReportsCharacterCount(t *testing.T) {
 		struct {
 			Value string "xml:\",chardata\""
 			Lang  string "xml:\"lang,attr,omitempty\""
-		}{multibyte, "de-DE"},
+		}{multibyte, "zh-CN"},
 		struct {
 			Value string "xml:\",chardata\""
 			Lang  string "xml:\"lang,attr,omitempty\""
@@ -125,7 +125,7 @@ func TestDescriptionTooLongReportsCharacterCount(t *testing.T) {
 		assert.Contains(t, result.Message, "length of 200")
 	}
 	assert.ElementsMatch(t, []string{
-		"metadata.description.length.de-DE",
+		"metadata.description.length.zh-CN",
 		"metadata.description.length.en-GB",
 	}, identifiers)
 }
@@ -136,7 +136,7 @@ func TestDescriptionMissingUsesTranslationIdentifier(t *testing.T) {
 		struct {
 			Value string "xml:\",chardata\""
 			Lang  string "xml:\"lang,attr,omitempty\""
-		}{"", "de-DE"},
+		}{"", "zh-CN"},
 		struct {
 			Value string "xml:\",chardata\""
 			Lang  string "xml:\"lang,attr,omitempty\""
@@ -150,15 +150,15 @@ func TestDescriptionMissingUsesTranslationIdentifier(t *testing.T) {
 	for _, result := range check.Results {
 		identifiers = append(identifiers, result.Identifier)
 	}
-	assert.Contains(t, identifiers, "metadata.description.translation.de-DE")
+	assert.Contains(t, identifiers, "metadata.description.translation.zh-CN")
 	assert.Contains(t, identifiers, "metadata.description.translation.en-GB")
-	assert.Contains(t, identifiers, "metadata.description.length.de-DE")
+	assert.Contains(t, identifiers, "metadata.description.length.zh-CN")
 	assert.Contains(t, identifiers, "metadata.description.length.en-GB")
 }
 
 func TestDescriptionIgnoreMatchesSpecificAndPrefixIdentifiers(t *testing.T) {
 	check := &testCheck{}
-	check.AddResult(validation.CheckResult{Identifier: "metadata.description.length.de-DE", Message: "too long"})
+	check.AddResult(validation.CheckResult{Identifier: "metadata.description.length.zh-CN", Message: "too long"})
 	check.AddResult(validation.CheckResult{Identifier: "metadata.description.translation.en-GB", Message: "missing"})
 	check.AddResult(validation.CheckResult{Identifier: "metadata.name", Message: "required"})
 
@@ -186,7 +186,7 @@ func TestLabelMissingUsesTranslationIdentifier(t *testing.T) {
 		struct {
 			Value string "xml:\",chardata\""
 			Lang  string "xml:\"lang,attr,omitempty\""
-		}{"", "de-DE"},
+		}{"", "zh-CN"},
 		struct {
 			Value string "xml:\",chardata\""
 			Lang  string "xml:\"lang,attr,omitempty\""
@@ -200,18 +200,18 @@ func TestLabelMissingUsesTranslationIdentifier(t *testing.T) {
 	for _, result := range check.Results {
 		identifiers = append(identifiers, result.Identifier)
 	}
-	assert.Contains(t, identifiers, "metadata.label.translation.de-DE")
+	assert.Contains(t, identifiers, "metadata.label.translation.zh-CN")
 	assert.Contains(t, identifiers, "metadata.label.translation.en-GB")
 }
 
 func TestLabelIgnoreMatchesSpecificAndPrefixIdentifiers(t *testing.T) {
 	check := &testCheck{}
-	check.AddResult(validation.CheckResult{Identifier: "metadata.label.translation.de-DE", Message: "missing de"})
+	check.AddResult(validation.CheckResult{Identifier: "metadata.label.translation.zh-CN", Message: "missing de"})
 	check.AddResult(validation.CheckResult{Identifier: "metadata.label.translation.en-GB", Message: "missing en"})
 	check.AddResult(validation.CheckResult{Identifier: "metadata.name", Message: "required"})
 
 	check.RemoveByIdentifier([]validation.ToolConfigIgnore{
-		{Identifier: "metadata.label.translation.de-DE"},
+		{Identifier: "metadata.label.translation.zh-CN"},
 	})
 
 	assert.Len(t, check.Results, 2)

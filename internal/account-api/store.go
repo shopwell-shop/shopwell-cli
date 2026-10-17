@@ -86,7 +86,7 @@ type rawStorePlugin struct {
 // GetStorePluginsByName fetches store metadata (versions, rating, changelogs,
 // pictures, localized descriptions, store link, ...) for the given technical
 // names, scoped to a Shopwell version. The locale must be in the store's
-// underscore form (e.g. "en_GB", "de_DE"); hyphenated locales are silently
+// underscore form (e.g. "en_GB", "zh_CN"); hyphenated locales are silently
 // ignored by the API. No authentication is required.
 func GetStorePluginsByName(ctx context.Context, locale, shopwellVersion string, technicalNames []string) ([]StorePlugin, error) {
 	q := url.Values{}

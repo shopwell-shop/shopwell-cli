@@ -380,12 +380,12 @@ func TestConsoleCommandNameWithAllowBinCI(t *testing.T) {
 func TestLocalExecutorWithEnv(t *testing.T) {
 	exec := &LocalExecutor{projectRoot: "/project"}
 	withEnv := exec.WithEnv(map[string]string{
-		"INSTALL_LOCALE":   "de-DE",
+		"INSTALL_LOCALE":   "zh-CN",
 		"INSTALL_CURRENCY": "EUR",
 	})
 
 	p := withEnv.PHPCommand(t.Context(), "vendor/bin/shopwell-deployment-helper", "run")
-	assert.Contains(t, p.Cmd.Env, "INSTALL_LOCALE=de-DE")
+	assert.Contains(t, p.Cmd.Env, "INSTALL_LOCALE=zh-CN")
 	assert.Contains(t, p.Cmd.Env, "INSTALL_CURRENCY=EUR")
 }
 
@@ -411,11 +411,11 @@ func TestDockerExecutorWithEnv(t *testing.T) {
 func TestSymfonyCLIExecutorWithEnv(t *testing.T) {
 	exec := &SymfonyCLIExecutor{BinaryPath: "/usr/local/bin/symfony", projectRoot: "/project"}
 	withEnv := exec.WithEnv(map[string]string{
-		"INSTALL_LOCALE": "de-DE",
+		"INSTALL_LOCALE": "zh-CN",
 	})
 
 	p := withEnv.PHPCommand(t.Context(), "-v")
-	assert.Contains(t, p.Cmd.Env, "INSTALL_LOCALE=de-DE")
+	assert.Contains(t, p.Cmd.Env, "INSTALL_LOCALE=zh-CN")
 }
 
 func TestLocalExecutorNPMCommand(t *testing.T) {

@@ -190,7 +190,7 @@ func TestRemoveByIdentifier(t *testing.T) {
 		{
 			name: "identifier prefix with message ignores matching children",
 			initialResults: []validation.CheckResult{
-				{Path: "composer.json", Identifier: "metadata.description.length.de-DE", Message: "too long"},
+				{Path: "composer.json", Identifier: "metadata.description.length.zh-CN", Message: "too long"},
 				{Path: "composer.json", Identifier: "metadata.description.translation.en-GB", Message: "missing"},
 			},
 			ignores: []validation.ToolConfigIgnore{
@@ -232,7 +232,7 @@ func TestRemoveByIdentifier(t *testing.T) {
 		{
 			name: "prefix identifier ignores more specific children",
 			initialResults: []validation.CheckResult{
-				{Path: "composer.json", Identifier: "metadata.description.length.de-DE"},
+				{Path: "composer.json", Identifier: "metadata.description.length.zh-CN"},
 				{Path: "composer.json", Identifier: "metadata.description.translation.en-GB"},
 				{Path: "composer.json", Identifier: "metadata.name"},
 			},
@@ -246,14 +246,14 @@ func TestRemoveByIdentifier(t *testing.T) {
 		{
 			name: "specific child identifier does not ignore siblings",
 			initialResults: []validation.CheckResult{
-				{Path: "composer.json", Identifier: "metadata.description.length.de-DE"},
-				{Path: "composer.json", Identifier: "metadata.description.translation.de-DE"},
+				{Path: "composer.json", Identifier: "metadata.description.length.zh-CN"},
+				{Path: "composer.json", Identifier: "metadata.description.translation.zh-CN"},
 			},
 			ignores: []validation.ToolConfigIgnore{
-				{Identifier: "metadata.description.length.de-DE"},
+				{Identifier: "metadata.description.length.zh-CN"},
 			},
 			expectedResults: []validation.CheckResult{
-				{Path: "composer.json", Identifier: "metadata.description.translation.de-DE"},
+				{Path: "composer.json", Identifier: "metadata.description.translation.zh-CN"},
 			},
 		},
 	}

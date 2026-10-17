@@ -119,7 +119,7 @@ stay raw — see below.
 ## App manifest.xml
 
 `NewAppManifest(name)` returns a complete, valid manifest with placeholder
-metadata (label/description in en + de-DE, author, copyright, version 1.0.0,
+metadata (label/description in en + zh-CN, author, copyright, version 1.0.0,
 MIT). Zero-valued fields are omitted, so validator tests express "manifest
 missing exactly one element" by clearing that field:
 

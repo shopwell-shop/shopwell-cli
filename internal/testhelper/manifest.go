@@ -28,8 +28,8 @@ type AppManifest struct {
 func NewAppManifest(name string) AppManifest {
 	return AppManifest{
 		Name:        name,
-		Label:       map[string]string{"": "Label", "de-DE": "Name"},
-		Description: map[string]string{"": "A description", "de-DE": "Eine Beschreibung"},
+		Label:       map[string]string{"": "Label", "zh-CN": "Name"},
+		Description: map[string]string{"": "A description", "zh-CN": "示例描述"},
 		Author:      "Your Company Ltd.",
 		Copyright:   "(c) by Your Company Ltd.",
 		Version:     "1.0.0",

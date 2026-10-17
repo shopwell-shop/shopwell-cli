@@ -69,7 +69,7 @@ grep -rn '"metadata.icon.size"' --include=*.go internal/ | grep -v _test
 | R6 | Clear, complete setup/configuration instructions | Store-doc-required | Remote listing | docs `#store-listing` | always |
 | R7 | Clean HTML, allowed tags only, no ads/contact info/backlinks | Store-doc-required | Remote listing | docs `#store-listing` | always |
 | R8 | No blank-space filler text | Store-doc-required | Remote listing | docs `#store-listing` | always |
-| R9 | German/English 1:1 parity | Store-doc-required | Remote listing | docs `#store-listing` | user states German Store intent, **or** `de-DE` values exist in `composer.json` (state which triggered it) |
+| R9 | Chinese/English 1:1 parity | Store-doc-required | Remote listing | docs `#store-listing` | user states Chinese Store intent, **or** `zh-CN` values exist in `composer.json` (state which triggered it) |
 | R10 | English fallback for settings and error messages | Store-doc-required | Extension behavior | docs `#admin-translations` | extension has user-facing settings or error messages |
 | A1 | Shopwell Account license matches the `composer.json` license **value** | Store-doc-required | Remote Account | docs `#extension-master-data-and-license` | always |
 | G1 | ≥1 storefront and ≥1 admin screenshot showing main features | Store-doc-guidance | Remote listing | docs `#images-and-screenshots` (*should*) | always |
@@ -89,7 +89,7 @@ When CLI and docs disagree on a requirement:
 
 Known differences:
 - Icon: the CLI's `metadata.icon.size` check rejects icons below 112 px and files above 30 kB, stricter than L4. When it fires, add that the Store standard is 84–256 px.
-- German metadata: the CLI requires `de-DE` label, description, manufacturerLink and supportLink unless `.shopwell-extension.yml` sets `store.availabilities` without `German`. When those lines fire for an extension meant for the international Store only, name that setting.
+- Chinese metadata: the CLI requires `zh-CN` label, description, manufacturerLink and supportLink unless `.shopwell-extension.yml` sets `store.availabilities` without `Chinese`. When those lines fire for an extension meant for the international Store only, name that setting.
 
 
 ## 3. Emit rules
@@ -97,9 +97,9 @@ Known differences:
 Eight invariants. Check each finding against all eight before writing it.
 
 1. **Lookup, not inference.** `Level`, `Target`, and `Source` come from the table verbatim.
-2. **Emit every ungated row, not a selection.** Before writing the remote section, walk rows R1–R10, A1, G1–G4 in order and emit each whose precondition holds. Dropping a row because it feels obvious or hard to check is a silent failure. Count them: an extension with no theme, no CMS elements, no settings UI, no German Store intent and no `de-DE` values yields R1–R8 plus A1; either German trigger adds R9.
+2. **Emit every ungated row, not a selection.** Before writing the remote section, walk rows R1–R10, A1, G1–G4 in order and emit each whose precondition holds. Dropping a row because it feels obvious or hard to check is a silent failure. Count them: an extension with no theme, no CMS elements, no settings UI, no Chinese Store intent and no `zh-CN` values yields R1–R8 plus A1; either Chinese trigger adds R9.
 3. **Remote rows can never become local changes.** Any row with `Target` = Remote listing / Remote Account / Extension behavior may appear **only** under "Remote conditions not verified". It can never be a required local change, and it can never be called missing, present, passing, failing, satisfied, or compliant unless the Shopwell Account listing was actually inspected.
-4. **Preconditions gate emission.** A row whose `Emit only if` is not proven true by evidence from §1 emits nothing at all. Not as "N/A", not as "not applicable", not as a struck-through line. It is absent. R9 and R10 are omitted entirely for an extension with no German Store intent and no settings UI.
+4. **Preconditions gate emission.** A row whose `Emit only if` is not proven true by evidence from §1 emits nothing at all. Not as "N/A", not as "not applicable", not as a struck-through line. It is absent. R9 and R10 are omitted entirely for an extension with no Chinese Store intent and no settings UI.
 5. **Local values are candidates, not proof.** Name the row and the specific rule the value bumps against, not generic advice: a label containing "Plugin" is incompatible with R5's prohibited-words rule, which is a different statement from "rename it to something better".
    - A candidate entry requires a **measured deficiency** — a value you read that conflicts with a named rule. A precondition firing is not a deficiency. If `config.xml` exists and its fields carry unqualified defaults plus `lang="…"` variants, the English fallback is present; say so or say nothing. Never write "verify that…" or "this may not…" about a file you have read: you either found a conflict and can quote it, or you did not.
    - Never propose a change that would delete existing content (translations, locales, fields) to satisfy a rule that content already satisfies. A `composer.json` label or description is a *sync candidate*. It may be described as compatible or incompatible with a remote rule. It never satisfies or fails one. R5 with a local label of "Acme Plugin" yields: remote display name unverified, **plus** a separate note that the local label candidate looks incompatible.

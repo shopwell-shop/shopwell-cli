@@ -22,7 +22,7 @@ func testStoreImage(t *testing.T, priority int, deActivated, enActivated bool, l
 
 	var image ExtensionImage
 	payload := fmt.Sprintf(
-		`{"remoteLink":%q,"priority":%d,"details":[{"activated":%t,"locale":{"name":"de_DE"}},{"activated":%t,"locale":{"name":"en_GB"}}]}`,
+		`{"remoteLink":%q,"priority":%d,"details":[{"activated":%t,"locale":{"name":"zh_CN"}},{"activated":%t,"locale":{"name":"en_GB"}}]}`,
 		link, priority, deActivated, enActivated,
 	)
 	require.NoError(t, json.Unmarshal([]byte(payload), &image))
@@ -67,7 +67,7 @@ func TestWriteImages(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// two images share priority 1 in german, so the second one must be moved to priority 2
+	// two images share priority 1 in chinese, so the second one must be moved to priority 2
 	images := []*ExtensionImage{
 		testStoreImage(t, 1, true, false, server.URL+"/a.png"),
 		testStoreImage(t, 1, true, true, server.URL+"/b.png"),
@@ -77,7 +77,7 @@ func TestWriteImages(t *testing.T) {
 	require.NoError(t, writeImages(t.Context(), server.Client(), imageDir, 0, images))
 	require.NoError(t, writeImages(t.Context(), server.Client(), imageDir, 1, images))
 
-	deEntries, err := os.ReadDir(filepath.Join(imageDir, "de"))
+	deEntries, err := os.ReadDir(filepath.Join(imageDir, "zh"))
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"1.png", "2.png"}, fileNames(deEntries))
 
@@ -85,7 +85,7 @@ func TestWriteImages(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"1.png"}, fileNames(enEntries))
 
-	content, err := os.ReadFile(filepath.Join(imageDir, "de", "1.png"))
+	content, err := os.ReadFile(filepath.Join(imageDir, "zh", "1.png"))
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "img:")
 }
@@ -103,7 +103,7 @@ func TestWriteImagesSkipsInactive(t *testing.T) {
 	imageDir := t.TempDir()
 	require.NoError(t, writeImages(t.Context(), server.Client(), imageDir, 0, images))
 
-	deEntries, err := os.ReadDir(filepath.Join(imageDir, "de"))
+	deEntries, err := os.ReadDir(filepath.Join(imageDir, "zh"))
 	require.NoError(t, err)
 	assert.Empty(t, deEntries)
 }
@@ -120,7 +120,7 @@ func TestWriteImagesSkipsMalformedDetails(t *testing.T) {
 	imageDir := t.TempDir()
 	require.NoError(t, writeImages(t.Context(), server.Client(), imageDir, 0, []*ExtensionImage{&image}))
 
-	deEntries, err := os.ReadDir(filepath.Join(imageDir, "de"))
+	deEntries, err := os.ReadDir(filepath.Join(imageDir, "zh"))
 	require.NoError(t, err)
 	assert.Empty(t, deEntries)
 }
@@ -137,11 +137,11 @@ func TestCollectStoreLanguageInfo(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "src/Resources/store"), 0o755))
 
-	lang := newStoreLanguageInfo("de")
+	lang := newStoreLanguageInfo("zh")
 	assert.False(t, lang.hasContent())
 
 	info := &ExtensionInfo{
-		Name:               "Label DE",
+		Name:               "Label ZH",
 		ShortDescription:   "Short DE",
 		Description:        "<p>Description</p>",
 		InstallationManual: "<p>Install</p>",
@@ -156,27 +156,27 @@ func TestCollectStoreLanguageInfo(t *testing.T) {
 
 	require.NoError(t, collectStoreLanguageInfo(dir, lang, info))
 	assert.True(t, lang.hasContent())
-	assert.Equal(t, "Label DE", lang.label)
+	assert.Equal(t, "Label ZH", lang.label)
 	assert.Equal(t, []string{"tag1"}, lang.tags)
 	assert.Equal(t, []string{"https://video"}, lang.videos)
 	assert.Equal(t, []string{"h1", "h2"}, lang.highlights)
 	assert.Equal(t, []string{"f1", "f2"}, lang.features)
 	require.Len(t, lang.faqs, 1)
 
-	desc, err := os.ReadFile(filepath.Join(dir, "src/Resources/store/description.de.html"))
+	desc, err := os.ReadFile(filepath.Join(dir, "src/Resources/store/description.zh.html"))
 	require.NoError(t, err)
 	assert.Equal(t, "<p>Description</p>", string(desc))
 
-	manual, err := os.ReadFile(filepath.Join(dir, "src/Resources/store/installation_manual.de.html"))
+	manual, err := os.ReadFile(filepath.Join(dir, "src/Resources/store/installation_manual.zh.html"))
 	require.NoError(t, err)
 	assert.Equal(t, "<p>Install</p>", string(manual))
 }
 
 func TestTranslatedFrom(t *testing.T) {
-	de := "german"
+	de := "chinese"
 	en := "english"
 	got := translatedFrom(&de, &en)
-	assert.Equal(t, &de, got.German)
+	assert.Equal(t, &de, got.Chinese)
 	assert.Equal(t, &en, got.English)
 }
 
@@ -196,19 +196,19 @@ func TestPullExtensionStoreInfo(t *testing.T) {
 	storeExt.StandardLocale = Locale{Name: "en_GB"}
 	storeExt.AutomaticBugfixVersionCompatibility = true
 	storeExt.ProductType = &StoreProductType{Name: "extension"}
-	storeExt.Localizations = []Locale{{Name: "de_DE"}, {Name: "en_GB"}}
+	storeExt.Localizations = []Locale{{Name: "zh_CN"}, {Name: "en_GB"}}
 	storeExt.StoreAvailabilities = []StoreAvailablity{{Name: "global"}}
 	storeExt.Demos = []ExtensionDemo{{
 		Type:          StoreDemoType{Name: "frontend"},
 		Link:          "https://demo.example",
-		Localization:  Locale{Name: "de_DE"},
+		Localization:  Locale{Name: "zh_CN"},
 		LoginName:     "demo",
 		LoginPassword: "secret",
 	}}
 	storeExt.Infos = []*ExtensionInfo{
 		{
-			Locale:             Locale{Name: "de_DE"},
-			Name:               "DE Label",
+			Locale:             Locale{Name: "zh_CN"},
+			Name:               "ZH Label",
 			ShortDescription:   "DE Short",
 			Description:        "DE Description",
 			InstallationManual: "DE Manual",
@@ -259,13 +259,13 @@ func TestPullExtensionStoreInfo(t *testing.T) {
 
 	// metadata updated
 	require.NotNil(t, zipExt.updated)
-	assert.Equal(t, "DE Label", zipExt.updated.Label.German)
+	assert.Equal(t, "ZH Label", zipExt.updated.Label.Chinese)
 	assert.Equal(t, "EN Label", zipExt.updated.Label.English)
 
 	// description files written
-	_, err = os.Stat(filepath.Join(extDir, "src/Resources/store/description.de.html"))
+	_, err = os.Stat(filepath.Join(extDir, "src/Resources/store/description.zh.html"))
 	require.NoError(t, err)
-	_, err = os.Stat(filepath.Join(extDir, "src/Resources/store/images/de/1.png"))
+	_, err = os.Stat(filepath.Join(extDir, "src/Resources/store/images/zh/1.png"))
 	require.NoError(t, err)
 }
 

@@ -53,7 +53,7 @@ Available generators: `admin-module`, `command`, `custom-fieldset`, `entity`, `e
 Intentional differences from Shopwell Core scaffolding:
 
 - PHP `src/Resources/config/services.php` and `routes.php` instead of XML.
-- Admin snippets as `en.json` / `de.json` instead of `en-GB` / `de-DE`.
+- Admin snippets as `en.json` / `zh.json` instead of `en-GB` / `zh-CN`.
 - Existing `main.js` is appended, not overwritten.
 - Existing plugin files are never overwritten; duplicate service/route blocks are skipped.
 - Interactive and non-interactive `extension add` share the same code path (flags/args only; no questionnaire).

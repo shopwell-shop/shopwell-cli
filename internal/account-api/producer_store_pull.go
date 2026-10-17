@@ -95,13 +95,13 @@ func PullExtensionStoreInfo(ctx context.Context, producer ProducerAPI, zipExt ex
 		}
 	}
 
-	de := newStoreLanguageInfo("de")
+	zh := newStoreLanguageInfo("zh")
 	en := newStoreLanguageInfo("en")
 
 	for _, info := range storeExt.Infos {
 		lang := en
-		if strings.HasPrefix(info.Locale.Name, "de") {
-			lang = de
+		if strings.HasPrefix(info.Locale.Name, "zh") {
+			lang = zh
 		}
 
 		if err := collectStoreLanguageInfo(zipExt.GetPath(), lang, info); err != nil {
@@ -109,14 +109,14 @@ func PullExtensionStoreInfo(ctx context.Context, producer ProducerAPI, zipExt ex
 		}
 	}
 
-	if de.hasContent() || en.hasContent() {
+	if zh.hasContent() || en.hasContent() {
 		err = zipExt.UpdateMetaData(&extension.ExtensionMetadata{
 			Label: extension.ExtensionTranslated{
-				German:  de.label,
+				Chinese: zh.label,
 				English: en.label,
 			},
 			Description: extension.ExtensionTranslated{
-				German:  de.shortDescription,
+				Chinese: zh.shortDescription,
 				English: en.shortDescription,
 			},
 		})
@@ -139,15 +139,15 @@ func PullExtensionStoreInfo(ctx context.Context, producer ProducerAPI, zipExt ex
 	newCfg.Store.AutomaticBugfixVersionCompatibility = &storeExt.AutomaticBugfixVersionCompatibility
 	newCfg.Store.Availabilities = &availabilities
 	newCfg.Store.Localizations = &localizations
-	newCfg.Store.Description = translatedFrom(&de.description, &en.description)
-	newCfg.Store.InstallationManual = translatedFrom(&de.installationManual, &en.installationManual)
-	newCfg.Store.Tags = translatedFrom(&de.tags, &en.tags)
-	newCfg.Store.Videos = translatedFrom(&de.videos, &en.videos)
-	newCfg.Store.Highlights = translatedFrom(&de.highlights, &en.highlights)
-	newCfg.Store.Features = translatedFrom(&de.features, &en.features)
-	newCfg.Store.Faq = translatedFrom(&de.faqs, &en.faqs)
-	newCfg.Store.MetaTitle = translatedFrom(&de.metaTitle, &en.metaTitle)
-	newCfg.Store.MetaDescription = translatedFrom(&de.metaDescription, &en.metaDescription)
+	newCfg.Store.Description = translatedFrom(&zh.description, &en.description)
+	newCfg.Store.InstallationManual = translatedFrom(&zh.installationManual, &en.installationManual)
+	newCfg.Store.Tags = translatedFrom(&zh.tags, &en.tags)
+	newCfg.Store.Videos = translatedFrom(&zh.videos, &en.videos)
+	newCfg.Store.Highlights = translatedFrom(&zh.highlights, &en.highlights)
+	newCfg.Store.Features = translatedFrom(&zh.features, &en.features)
+	newCfg.Store.Faq = translatedFrom(&zh.faqs, &en.faqs)
+	newCfg.Store.MetaTitle = translatedFrom(&zh.metaTitle, &en.metaTitle)
+	newCfg.Store.MetaDescription = translatedFrom(&zh.metaDescription, &en.metaDescription)
 	newCfg.Store.DemoShops = &demoShops
 	newCfg.Store.Images = nil
 
@@ -238,8 +238,8 @@ func collectStoreLanguageInfo(extensionPath string, lang *storeLanguageInfo, inf
 	return nil
 }
 
-func translatedFrom[T any](german, english *T) extension.ConfigTranslated[T] {
-	return extension.ConfigTranslated[T]{German: german, English: english}
+func translatedFrom[T any](chinese, english *T) extension.ConfigTranslated[T] {
+	return extension.ConfigTranslated[T]{Chinese: chinese, English: english}
 }
 
 func downloadFileTo(ctx context.Context, client *http.Client, url string, target string) error {
@@ -302,7 +302,7 @@ func writeImages(ctx context.Context, client *http.Client, imagePath string, ind
 	}
 
 	if index == 0 {
-		imagePath = path.Join(imagePath, "de")
+		imagePath = path.Join(imagePath, "zh")
 	} else {
 		imagePath = path.Join(imagePath, "en")
 	}

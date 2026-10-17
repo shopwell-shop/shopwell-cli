@@ -23,13 +23,13 @@ func TestIdentifierMatches(t *testing.T) {
 		},
 		{
 			name:      "child identifier",
-			result:    "metadata.description.length.de-DE",
+			result:    "metadata.description.length.zh-CN",
 			ignore:    "metadata.description",
 			wantMatch: true,
 		},
 		{
 			name:      "nested prefix",
-			result:    "metadata.description.length.de-DE",
+			result:    "metadata.description.length.zh-CN",
 			ignore:    "metadata.description.length",
 			wantMatch: true,
 		},

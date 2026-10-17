@@ -96,7 +96,7 @@ func UploadExtension(ctx context.Context, producer ProducerAPI, zipExt extension
 			Version:          zipVersion.String(),
 			SoftwareVersions: availableVersions.FilterOnVersionStringList(constraint),
 			Changelogs: []ExtensionUpdateChangelog{
-				{Locale: "de_DE", Text: changelog.German},
+				{Locale: "zh_CN", Text: changelog.Chinese},
 				{Locale: "en_GB", Text: changelog.English},
 			},
 		}
@@ -118,7 +118,7 @@ func UploadExtension(ctx context.Context, producer ProducerAPI, zipExt extension
 		Id:               foundBinary.Id,
 		SoftwareVersions: availableVersions.FilterOnVersionStringList(constraint),
 		Changelogs: []ExtensionUpdateChangelog{
-			{Locale: "de_DE", Text: changelog.German},
+			{Locale: "zh_CN", Text: changelog.Chinese},
 			{Locale: "en_GB", Text: changelog.English},
 		},
 	}

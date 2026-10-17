@@ -189,7 +189,7 @@ func TestUploadExtensionCreatesBinary(t *testing.T) {
 		path:       t.TempDir(),
 		extVersion: ver,
 		constraint: &constraint,
-		changelog:  &extension.ExtensionChangelog{German: "de notes", English: "en notes"},
+		changelog:  &extension.ExtensionChangelog{Chinese: "de notes", English: "en notes"},
 	}
 
 	require.NoError(t, UploadExtension(t.Context(), producer, zipExt, zipPath, UploadOptions{

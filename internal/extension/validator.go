@@ -274,11 +274,11 @@ func runDefaultValidate(ext Extension, check validation.Check) {
 	}
 
 	metaData := ext.GetMetaData()
-	if len(metaData.Label.German) == 0 {
+	if len(metaData.Label.Chinese) == 0 {
 		check.AddResult(validation.CheckResult{
 			Path:       rootFile,
-			Identifier: "metadata.label.translation.de-DE",
-			Message:    "in composer.json, label is not translated in german",
+			Identifier: "metadata.label.translation.zh-CN",
+			Message:    "in composer.json, label is not translated in chinese",
 			Severity:   validation.SeverityError,
 		})
 	}
@@ -294,14 +294,14 @@ func runDefaultValidate(ext Extension, check validation.Check) {
 
 	// Skip description validation for ShopwellBundle
 	if ext.GetType() != TypeShopwellBundle {
-		germanDescriptionLength := utf8.RuneCountInString(metaData.Description.German)
+		chineseDescriptionLength := utf8.RuneCountInString(metaData.Description.Chinese)
 		englishDescriptionLength := utf8.RuneCountInString(metaData.Description.English)
 
-		if germanDescriptionLength == 0 {
+		if chineseDescriptionLength == 0 {
 			check.AddResult(validation.CheckResult{
 				Path:       rootFile,
-				Identifier: "metadata.description.translation.de-DE",
-				Message:    "in composer.json, description is not translated in german",
+				Identifier: "metadata.description.translation.zh-CN",
+				Message:    "in composer.json, description is not translated in chinese",
 				Severity:   validation.SeverityError,
 			})
 		}
@@ -315,11 +315,11 @@ func runDefaultValidate(ext Extension, check validation.Check) {
 			})
 		}
 
-		if germanDescriptionLength < 150 || germanDescriptionLength > 185 {
+		if chineseDescriptionLength < 150 || chineseDescriptionLength > 185 {
 			check.AddResult(validation.CheckResult{
 				Path:       rootFile,
-				Identifier: "metadata.description.length.de-DE",
-				Message:    fmt.Sprintf("in composer.json, the german description with length of %d should have a length from 150 up to 185 characters.", germanDescriptionLength),
+				Identifier: "metadata.description.length.zh-CN",
+				Message:    fmt.Sprintf("in composer.json, the chinese description with length of %d should have a length from 150 up to 185 characters.", chineseDescriptionLength),
 				Severity:   validation.SeverityError,
 			})
 		}

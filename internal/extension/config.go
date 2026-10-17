@@ -120,11 +120,11 @@ func (b ConfigExtraBundle) ResolveName() string {
 
 type ConfigStore struct {
 	// Specifies the visibility in stores.
-	Availabilities *[]string `yaml:"availabilities" jsonschema:"enum=German,enum=International"`
+	Availabilities *[]string `yaml:"availabilities" jsonschema:"enum=Chinese,enum=International"`
 	// Specifies the default locale.
-	DefaultLocale *string `yaml:"default_locale" jsonschema:"enum=de_DE,enum=en_GB"`
+	DefaultLocale *string `yaml:"default_locale" jsonschema:"enum=zh_CN,enum=en_GB"`
 	// Specifies the languages the extension is translated.
-	Localizations *[]string `yaml:"localizations" jsonschema:"enum=de_DE,enum=en_GB,enum=bs_BA,enum=bg_BG,enum=cs_CZ,enum=da_DK,enum=de_CH,enum=el_GR,enum=en_US,enum=es_ES,enum=fi_FI,enum=fr_FR,enum=hi_IN,enum=hr_HR,enum=hu_HU,enum=hy,enum=id_ID,enum=it_IT,enum=ko_KR,enum=lv_LV,enum=ms_MY,enum=nl_NL,enum=pl_PL,enum=pt_BR,enum=pt_PT,enum=ro_RO,enum=ru_RU,enum=sk_SK,enum=sl_SI,enum=sr_RS,enum=sv_SE,enum=th_TH,enum=tr_TR,enum=uk_UA,enum=vi_VN,enum=zh_CN,enum=zh_TW"`
+	Localizations *[]string `yaml:"localizations" jsonschema:"enum=zh_CN,enum=en_GB,enum=bs_BA,enum=bg_BG,enum=cs_CZ,enum=da_DK,enum=de_CH,enum=el_GR,enum=en_US,enum=es_ES,enum=fi_FI,enum=fr_FR,enum=hi_IN,enum=hr_HR,enum=hu_HU,enum=hy,enum=id_ID,enum=it_IT,enum=ko_KR,enum=lv_LV,enum=ms_MY,enum=nl_NL,enum=pl_PL,enum=pt_BR,enum=pt_PT,enum=ro_RO,enum=ru_RU,enum=sk_SK,enum=sl_SI,enum=sr_RS,enum=sv_SE,enum=th_TH,enum=tr_TR,enum=uk_UA,enum=vi_VN,enum=zh_TW"`
 	// Specifies the type of the extension.
 	Type *string `yaml:"type" jsonschema:"enum=extension,enum=theme"`
 	// Specifies the Path to the icon (256x256 px) for store.
@@ -163,7 +163,7 @@ type ConfigStoreDemoShop struct {
 	// Specifies the URL to the demo shop.
 	Link string `yaml:"link"`
 	// Specifies the language of the demo shop.
-	Localization string `yaml:"localization" jsonschema:"enum=de_DE,enum=en_GB"`
+	Localization string `yaml:"localization" jsonschema:"enum=zh_CN,enum=en_GB"`
 	// Specifies the login name to access the demo shop.
 	LoginName string `yaml:"login_name,omitempty"`
 	// Specifies the login password to access the demo shop.
@@ -171,7 +171,7 @@ type ConfigStoreDemoShop struct {
 }
 
 type ConfigTranslated[T any] struct {
-	German  *T `yaml:"de,omitempty"`
+	Chinese *T `yaml:"zh,omitempty"`
 	English *T `yaml:"en,omitempty"`
 }
 
@@ -204,12 +204,12 @@ func (i ConfigStoreImage) GetPosition() int {
 }
 
 type ConfigStoreImageActivate struct {
-	German  bool `yaml:"de"`
+	Chinese bool `yaml:"zh"`
 	English bool `yaml:"en"`
 }
 
 type ConfigStoreImagePreview struct {
-	German  bool `yaml:"de"`
+	Chinese bool `yaml:"zh"`
 	English bool `yaml:"en"`
 }
 
@@ -308,16 +308,16 @@ func validateExtensionConfig(config *Config) error {
 		return errors.New("store.tags.en can contain at most 5 items")
 	}
 
-	if config.Store.Tags.German != nil && len(*config.Store.Tags.German) > 5 {
-		return errors.New("store.tags.de can contain at most 5 items")
+	if config.Store.Tags.Chinese != nil && len(*config.Store.Tags.Chinese) > 5 {
+		return errors.New("store.tags.zh can contain at most 5 items")
 	}
 
 	if config.Store.Videos.English != nil && len(*config.Store.Videos.English) > 2 {
 		return errors.New("store.videos.en can contain at most 2 items")
 	}
 
-	if config.Store.Videos.German != nil && len(*config.Store.Videos.German) > 2 {
-		return errors.New("store.videos.de can contain at most 2 items")
+	if config.Store.Videos.Chinese != nil && len(*config.Store.Videos.Chinese) > 2 {
+		return errors.New("store.videos.zh can contain at most 2 items")
 	}
 
 	for i, cache := range config.Build.Zip.Assets.AdditionalCaches {
@@ -386,13 +386,13 @@ func (c *Config) Dump(dir string) error {
 	return encoder.Encode(c)
 }
 
-func (c *ConfigStore) IsInGermanStore() bool {
+func (c *ConfigStore) IsInChineseStore() bool {
 	if c.Availabilities == nil {
 		return true
 	}
 
 	for _, availability := range *c.Availabilities {
-		if availability == "German" {
+		if availability == "Chinese" {
 			return true
 		}
 	}

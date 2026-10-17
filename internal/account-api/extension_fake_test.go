@@ -69,7 +69,7 @@ func (f *fakeExtension) GetChangelog() (*extension.ExtensionChangelog, error) {
 	if f.changelog != nil {
 		return f.changelog, nil
 	}
-	return &extension.ExtensionChangelog{German: "de", English: "en"}, nil
+	return &extension.ExtensionChangelog{Chinese: "zh", English: "en"}, nil
 }
 
 func (f *fakeExtension) GetMetaData() *extension.ExtensionMetadata {
@@ -77,8 +77,8 @@ func (f *fakeExtension) GetMetaData() *extension.ExtensionMetadata {
 		return f.metadata
 	}
 	return &extension.ExtensionMetadata{
-		Label:       extension.ExtensionTranslated{German: "DE Label", English: "EN Label"},
-		Description: extension.ExtensionTranslated{German: "DE Desc", English: "EN Desc"},
+		Label:       extension.ExtensionTranslated{Chinese: "DE Label", English: "EN Label"},
+		Description: extension.ExtensionTranslated{Chinese: "DE Desc", English: "EN Desc"},
 	}
 }
 

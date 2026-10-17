@@ -261,7 +261,7 @@
           "items": {
             "type": "string",
             "enum": [
-              "German",
+              "Chinese",
               "International"
             ]
           },
@@ -271,7 +271,7 @@
         "default_locale": {
           "type": "string",
           "enum": [
-            "de_DE",
+            "zh_CN",
             "en_GB"
           ],
           "description": "Specifies the default locale."
@@ -280,7 +280,7 @@
           "items": {
             "type": "string",
             "enum": [
-              "de_DE",
+              "zh_CN",
               "en_GB",
               "bs_BA",
               "bg_BG",
@@ -315,7 +315,6 @@
               "tr_TR",
               "uk_UA",
               "vi_VN",
-              "zh_CN",
               "zh_TW"
             ]
           },
@@ -413,7 +412,7 @@
         "localization": {
           "type": "string",
           "enum": [
-            "de_DE",
+            "zh_CN",
             "en_GB"
           ],
           "description": "Specifies the language of the demo shop."
@@ -474,7 +473,7 @@
     },
     "ConfigStoreImageActivate": {
       "properties": {
-        "de": {
+        "zh": {
           "type": "boolean"
         },
         "en": {
@@ -486,7 +485,7 @@
     },
     "ConfigStoreImagePreview": {
       "properties": {
-        "de": {
+        "zh": {
           "type": "boolean"
         },
         "en": {
@@ -498,7 +497,7 @@
     },
     "ConfigTranslated[ConfigStoreFaq]": {
       "properties": {
-        "de": {
+        "zh": {
           "items": {
             "$ref": "#/$defs/ConfigStoreFaq"
           },
@@ -516,7 +515,7 @@
     },
     "ConfigTranslated[[]string]": {
       "properties": {
-        "de": {
+        "zh": {
           "items": {
             "type": "string"
           },
@@ -534,7 +533,7 @@
     },
     "ConfigTranslated[string]": {
       "properties": {
-        "de": {
+        "zh": {
           "type": "string"
         },
         "en": {

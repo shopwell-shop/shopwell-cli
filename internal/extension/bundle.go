@@ -150,11 +150,11 @@ func (p ShopwellBundle) GetIconPath() string {
 func (p ShopwellBundle) GetMetaData() *ExtensionMetadata {
 	return &ExtensionMetadata{
 		Label: ExtensionTranslated{
-			German:  "FALLBACK",
+			Chinese: "FALLBACK",
 			English: "FALLBACK",
 		},
 		Description: ExtensionTranslated{
-			German:  "FALLBACK",
+			Chinese: "FALLBACK",
 			English: "FALLBACK",
 		},
 	}

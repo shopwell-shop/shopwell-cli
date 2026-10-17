@@ -164,11 +164,11 @@ func (p PlatformPlugin) GetMetaData() *ExtensionMetadata {
 	return &ExtensionMetadata{
 		Name: p.Composer.Name,
 		Label: ExtensionTranslated{
-			German:  p.Composer.Extra.Label["de-DE"],
+			Chinese: p.Composer.Extra.Label["zh-CN"],
 			English: p.Composer.Extra.Label["en-GB"],
 		},
 		Description: ExtensionTranslated{
-			German:  p.Composer.Extra.Description["de-DE"],
+			Chinese: p.Composer.Extra.Description["zh-CN"],
 			English: p.Composer.Extra.Description["en-GB"],
 		},
 	}
@@ -195,13 +195,13 @@ func (p PlatformPlugin) UpdateMetaData(metadata *ExtensionMetadata) error {
 
 	changed := false
 
-	if metadata.Label.German != "" || metadata.Label.English != "" {
+	if metadata.Label.Chinese != "" || metadata.Label.English != "" {
 		label, ok := extra["label"].(map[string]interface{})
 		if !ok {
 			label = make(map[string]interface{})
 		}
-		if metadata.Label.German != "" {
-			label["de-DE"] = metadata.Label.German
+		if metadata.Label.Chinese != "" {
+			label["zh-CN"] = metadata.Label.Chinese
 		}
 		if metadata.Label.English != "" {
 			label["en-GB"] = metadata.Label.English
@@ -210,13 +210,13 @@ func (p PlatformPlugin) UpdateMetaData(metadata *ExtensionMetadata) error {
 		changed = true
 	}
 
-	if metadata.Description.German != "" || metadata.Description.English != "" {
+	if metadata.Description.Chinese != "" || metadata.Description.English != "" {
 		description, ok := extra["description"].(map[string]interface{})
 		if !ok {
 			description = make(map[string]interface{})
 		}
-		if metadata.Description.German != "" {
-			description["de-DE"] = metadata.Description.German
+		if metadata.Description.Chinese != "" {
+			description["zh-CN"] = metadata.Description.Chinese
 		}
 		if metadata.Description.English != "" {
 			description["en-GB"] = metadata.Description.English
@@ -335,9 +335,9 @@ func (p PlatformPlugin) Validate(c context.Context, check validation.Check) {
 		}
 	}
 
-	requiredKeys := []string{"de-DE", "en-GB"}
+	requiredKeys := []string{"zh-CN", "en-GB"}
 
-	if !p.GetExtensionConfig().Store.IsInGermanStore() {
+	if !p.GetExtensionConfig().Store.IsInChineseStore() {
 		requiredKeys = []string{"en-GB"}
 	}
 

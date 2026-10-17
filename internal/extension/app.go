@@ -130,16 +130,16 @@ func (a App) GetIconPath() string {
 }
 
 func (a App) GetMetaData() *ExtensionMetadata {
-	german := []string{"de-DE", "de"}
+	chinese := []string{"zh-CN", "zh"}
 	english := []string{"en-GB", "en-US", "en", ""}
 
 	return &ExtensionMetadata{
 		Label: ExtensionTranslated{
-			German:  a.manifest.Meta.Label.GetValueByLanguage(german),
+			Chinese: a.manifest.Meta.Label.GetValueByLanguage(chinese),
 			English: a.manifest.Meta.Label.GetValueByLanguage(english),
 		},
 		Description: ExtensionTranslated{
-			German:  a.manifest.Meta.Description.GetValueByLanguage(german),
+			Chinese: a.manifest.Meta.Description.GetValueByLanguage(chinese),
 			English: a.manifest.Meta.Description.GetValueByLanguage(english),
 		},
 	}
@@ -200,7 +200,7 @@ func updateTranslatableXMLElement(parent *xmlpath.Element, name string, translat
 		value string
 	}{
 		{"en-GB", translated.English},
-		{"de-DE", translated.German},
+		{"zh-CN", translated.Chinese},
 	}
 
 	matched := make(map[string]bool)

@@ -16,7 +16,7 @@ import (
 func demoGeneralInfo() *ExtensionGeneralInformation {
 	return &ExtensionGeneralInformation{
 		Locales: []Locale{
-			{Id: 1, Name: "de_DE"},
+			{Id: 1, Name: "zh_CN"},
 			{Id: 2, Name: "en_GB"},
 		},
 		DemoTypes: []StoreDemoType{
@@ -31,7 +31,7 @@ func TestBuildExtensionDemos(t *testing.T) {
 		{
 			Type:          "frontend",
 			Link:          "https://demo.example.com",
-			Localization:  "de_DE",
+			Localization:  "zh_CN",
 			LoginName:     "demo",
 			LoginPassword: "secret",
 		},
@@ -47,7 +47,7 @@ func TestBuildExtensionDemos(t *testing.T) {
 		{
 			Type:          StoreDemoType{Id: 1, Name: "frontend", Description: "Frontend demo"},
 			Link:          "https://demo.example.com",
-			Localization:  Locale{Id: 1, Name: "de_DE"},
+			Localization:  Locale{Id: 1, Name: "zh_CN"},
 			LoginName:     "demo",
 			LoginPassword: "secret",
 		},
@@ -69,7 +69,7 @@ func TestBuildExtensionDemosEmptyList(t *testing.T) {
 
 func TestBuildExtensionDemosUnknownType(t *testing.T) {
 	_, err := buildExtensionDemos([]extension.ConfigStoreDemoShop{
-		{Type: "storefront", Link: "https://demo.example.com", Localization: "de_DE"},
+		{Type: "storefront", Link: "https://demo.example.com", Localization: "zh_CN"},
 	}, demoGeneralInfo())
 
 	require.Error(t, err)
@@ -84,7 +84,7 @@ func TestBuildExtensionDemosUnknownLocalization(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown demo shop localization \"fr_FR\"")
-	assert.Contains(t, err.Error(), "de_DE, en_GB")
+	assert.Contains(t, err.Error(), "zh_CN, en_GB")
 }
 
 func TestUpdateStoreInfoKeepsDemosWhenNotConfigured(t *testing.T) {
@@ -135,31 +135,31 @@ func TestUpdateStoreInfoClearsDemos(t *testing.T) {
 
 func TestUpdateStoreInfoAppliesTranslations(t *testing.T) {
 	var ext Extension
-	require.NoError(t, json.Unmarshal([]byte(`{"infos":[{"locale":{"name":"de_DE"}},{"locale":{"name":"en_GB"}}]}`), &ext))
+	require.NoError(t, json.Unmarshal([]byte(`{"infos":[{"locale":{"name":"zh_CN"}},{"locale":{"name":"en_GB"}}]}`), &ext))
 
-	deMetaTitle := "German title"
+	deMetaTitle := "Chinese title"
 	enMetaTitle := "English title"
 	deTags := []string{"tag-de"}
 	enTags := []string{"tag-en"}
 
 	cfg := &extension.Config{}
-	cfg.Store.MetaTitle = extension.ConfigTranslated[string]{German: &deMetaTitle, English: &enMetaTitle}
-	cfg.Store.Tags = extension.ConfigTranslated[[]string]{German: &deTags, English: &enTags}
+	cfg.Store.MetaTitle = extension.ConfigTranslated[string]{Chinese: &deMetaTitle, English: &enMetaTitle}
+	cfg.Store.Tags = extension.ConfigTranslated[[]string]{Chinese: &deTags, English: &enTags}
 
 	require.NoError(t, updateStoreInfo(&ext, nil, cfg, demoGeneralInfo()))
 
-	assert.Equal(t, "German title", ext.Infos[0].MetaTitle)
+	assert.Equal(t, "Chinese title", ext.Infos[0].MetaTitle)
 	assert.Equal(t, "English title", ext.Infos[1].MetaTitle)
 	assert.Equal(t, []StoreTag{{Name: "tag-de"}}, ext.Infos[0].Tags)
 	assert.Equal(t, []StoreTag{{Name: "tag-en"}}, ext.Infos[1].Tags)
 }
 
 func TestGetTranslation(t *testing.T) {
-	german := "de"
+	chinese := "zh"
 	english := "en"
-	config := extension.ConfigTranslated[string]{German: &german, English: &english}
+	config := extension.ConfigTranslated[string]{Chinese: &chinese, English: &english}
 
-	assert.Equal(t, &german, getTranslation("de", config))
+	assert.Equal(t, &chinese, getTranslation("zh", config))
 	assert.Equal(t, &english, getTranslation("en", config))
 	assert.Nil(t, getTranslation("fr", config))
 }
@@ -200,7 +200,7 @@ func TestParseInlineablePathMissingFile(t *testing.T) {
 }
 
 func TestLanguageFromLocale(t *testing.T) {
-	assert.Equal(t, "de", languageFromLocale("de_DE"))
+	assert.Equal(t, "zh", languageFromLocale("zh_CN"))
 	assert.Equal(t, "en", languageFromLocale("en_GB"))
 	assert.Equal(t, "", languageFromLocale(""))
 	assert.Equal(t, "", languageFromLocale("d"))
@@ -209,7 +209,7 @@ func TestLanguageFromLocale(t *testing.T) {
 
 func TestUploadImagesByDirectory(t *testing.T) {
 	dir := t.TempDir()
-	deDir := filepath.Join(dir, "de")
+	deDir := filepath.Join(dir, "zh")
 	require.NoError(t, os.MkdirAll(deDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(deDir, "1-first.png"), []byte("x"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(deDir, "2-second.png"), []byte("x"), 0o644))
@@ -254,13 +254,13 @@ func TestPushExtensionStoreInfo(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(extDir, iconPath), []byte("icon"), 0o644))
 
 	imageDir := "src/Resources/store/images"
-	require.NoError(t, os.MkdirAll(filepath.Join(extDir, imageDir, "de"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(extDir, imageDir, "de", "1-first.png"), []byte("img"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(extDir, imageDir, "zh"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(extDir, imageDir, "zh", "1-first.png"), []byte("img"), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(extDir, imageDir, "en"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(extDir, imageDir, "en", "1-first.png"), []byte("img"), 0o644))
 
 	var storeExt Extension
-	require.NoError(t, json.Unmarshal([]byte(`{"id":7,"infos":[{"locale":{"name":"de_DE"}},{"locale":{"name":"en_GB"}}]}`), &storeExt))
+	require.NoError(t, json.Unmarshal([]byte(`{"id":7,"infos":[{"locale":{"name":"zh_CN"}},{"locale":{"name":"en_GB"}}]}`), &storeExt))
 
 	var updatedExtension *Extension
 	var iconUpdated bool
@@ -310,8 +310,8 @@ func TestPushExtensionStoreInfo(t *testing.T) {
 		path:   extDir,
 		config: cfg,
 		metadata: &extension.ExtensionMetadata{
-			Label:       extension.ExtensionTranslated{German: "DE", English: "EN"},
-			Description: extension.ExtensionTranslated{German: "DEsc", English: "ENsc"},
+			Label:       extension.ExtensionTranslated{Chinese: "DE", English: "EN"},
+			Description: extension.ExtensionTranslated{Chinese: "DEsc", English: "ENsc"},
 		},
 	}
 
@@ -338,7 +338,7 @@ func TestPushExtensionStoreInfoManualImages(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(extDir, imgFile), []byte("img"), 0o644))
 
 	var storeExt Extension
-	require.NoError(t, json.Unmarshal([]byte(`{"id":7,"infos":[{"locale":{"name":"de_DE"}},{"locale":{"name":"en_GB"}}]}`), &storeExt))
+	require.NoError(t, json.Unmarshal([]byte(`{"id":7,"infos":[{"locale":{"name":"zh_CN"}},{"locale":{"name":"en_GB"}}]}`), &storeExt))
 
 	var updated *ExtensionImage
 	producer := &fakeProducer{
@@ -366,8 +366,8 @@ func TestPushExtensionStoreInfoManualImages(t *testing.T) {
 	cfg.Store.Images = &[]extension.ConfigStoreImage{
 		{
 			File:     imgFile,
-			Activate: extension.ConfigStoreImageActivate{German: true, English: false},
-			Preview:  extension.ConfigStoreImagePreview{German: true, English: false},
+			Activate: extension.ConfigStoreImageActivate{Chinese: true, English: false},
+			Preview:  extension.ConfigStoreImagePreview{Chinese: true, English: false},
 		},
 	}
 
@@ -386,18 +386,18 @@ func TestPushExtensionStoreInfoManualImages(t *testing.T) {
 
 func TestUpdateStoreInfoAppliesStoreFields(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "desc.de.html"), []byte("<p>de</p>"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "desc.zh.html"), []byte("<p>de</p>"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "manual.en.html"), []byte("<p>en</p>"), 0o644))
 
 	var ext Extension
-	require.NoError(t, json.Unmarshal([]byte(`{"infos":[{"locale":{"name":"de_DE"}},{"locale":{"name":"en_GB"}}]}`), &ext))
+	require.NoError(t, json.Unmarshal([]byte(`{"infos":[{"locale":{"name":"zh_CN"}},{"locale":{"name":"en_GB"}}]}`), &ext))
 
-	defaultLocale := "de_DE"
+	defaultLocale := "zh_CN"
 	productType := "extension"
 	auto := true
-	localizations := []string{"de_DE", "en_GB"}
+	localizations := []string{"zh_CN", "en_GB"}
 	availabilities := []string{"global"}
-	deDesc := "file:desc.de.html"
+	zhDesc := "file:desc.zh.html"
 	enManual := "file:manual.en.html"
 	deHighlights := []string{"h1"}
 	enFeatures := []string{"f1"}
@@ -415,19 +415,19 @@ func TestUpdateStoreInfoAppliesStoreFields(t *testing.T) {
 	cfg.Store.Availabilities = &availabilities
 	cfg.Store.Type = &productType
 	cfg.Store.AutomaticBugfixVersionCompatibility = &auto
-	cfg.Store.Description = extension.ConfigTranslated[string]{German: &deDesc}
+	cfg.Store.Description = extension.ConfigTranslated[string]{Chinese: &zhDesc}
 	cfg.Store.InstallationManual = extension.ConfigTranslated[string]{English: &enManual}
-	cfg.Store.Highlights = extension.ConfigTranslated[[]string]{German: &deHighlights}
+	cfg.Store.Highlights = extension.ConfigTranslated[[]string]{Chinese: &deHighlights}
 	cfg.Store.Features = extension.ConfigTranslated[[]string]{English: &enFeatures}
-	cfg.Store.Faq = extension.ConfigTranslated[[]extension.ConfigStoreFaq]{German: &deFaqs}
-	cfg.Store.Videos = extension.ConfigTranslated[[]string]{German: &deVideos}
-	cfg.Store.MetaDescription = extension.ConfigTranslated[string]{German: &deMetaDesc}
+	cfg.Store.Faq = extension.ConfigTranslated[[]extension.ConfigStoreFaq]{Chinese: &deFaqs}
+	cfg.Store.Videos = extension.ConfigTranslated[[]string]{Chinese: &deVideos}
+	cfg.Store.MetaDescription = extension.ConfigTranslated[string]{Chinese: &deMetaDesc}
 
 	zipExt := &fakeExtension{path: dir}
 	require.NoError(t, updateStoreInfo(&ext, zipExt, cfg, info))
 
-	assert.Equal(t, "de_DE", ext.StandardLocale.Name)
-	assert.Equal(t, []Locale{{Name: "de_DE"}, {Name: "en_GB"}}, ext.Localizations)
+	assert.Equal(t, "zh_CN", ext.StandardLocale.Name)
+	assert.Equal(t, []Locale{{Name: "zh_CN"}, {Name: "en_GB"}}, ext.Localizations)
 	require.Len(t, ext.StoreAvailabilities, 1)
 	assert.Equal(t, "global", ext.StoreAvailabilities[0].Name)
 	require.NotNil(t, ext.ProductType)

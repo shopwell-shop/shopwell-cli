@@ -84,12 +84,12 @@ func GetExtensionByZip(ctx context.Context, filePath string) (Extension, error) 
 }
 
 type ExtensionTranslated struct {
-	German  string `json:"german"`
+	Chinese string `json:"chinese"`
 	English string `json:"english"`
 }
 
 type ExtensionChangelog struct {
-	German     string `json:"german"`
+	Chinese    string `json:"chinese"`
 	English    string `json:"english"`
 	Changelogs map[string]string
 }

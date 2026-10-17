@@ -153,7 +153,7 @@ func TestGetExtensionGeneralInfo(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/pluginstatics/all", r.URL.Path)
 		_ = json.NewEncoder(w).Encode(ExtensionGeneralInformation{
-			Locales: []Locale{{Id: 1, Name: "de_DE"}},
+			Locales: []Locale{{Id: 1, Name: "zh_CN"}},
 		})
 	})
 
@@ -161,5 +161,5 @@ func TestGetExtensionGeneralInfo(t *testing.T) {
 	info, err := endpoint.GetExtensionGeneralInfo(t.Context())
 	require.NoError(t, err)
 	require.Len(t, info.Locales, 1)
-	assert.Equal(t, "de_DE", info.Locales[0].Name)
+	assert.Equal(t, "zh_CN", info.Locales[0].Name)
 }

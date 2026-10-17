@@ -169,7 +169,7 @@ the language step carries no `language` tag).
 | `failed_step`        | Step that was running when the install failed (only for `failure`). `install_start` means the helper failed before any step began; `save_credentials` means the install succeeded but writing the admin credentials to the project config failed. | `system:install` / `install_start` / `save_credentials` |
 | `failure_category`   | Classified reason the install failed (only for `failure`). Closed enum — the raw error text is **never** sent. | `db_connection` / `db_version` / `env_config` / `migration` / `permission` / `php` / `invalid_input` / `already_exists` / `missing_prerequisite` / `theme_compile` / `transport` / `unknown` |
 | `duration_ms`        | Install runtime, once the install actually started            | `84213`          |
-| `language`           | Selected default language                                     | `de-DE`          |
+| `language`           | Selected default language                                     | `zh-CN`          |
 | `currency`           | Selected default currency                                     | `EUR`            |
 | `custom_credentials` | Whether the default admin username/password were changed. The credentials themselves are **never** sent. | `false` |
 | `interactive`        | `true` for the TUI wizard, `false` for `project dev install`  | `true`           |

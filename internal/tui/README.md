@@ -75,7 +75,7 @@ Default Language
 Select the primary language
 
 ● English (UK) (en-GB)
-  Deutsch (de-DE)
+  简体中文 (zh-CN)
 ```
 
 ### FilterSelect / FilterMultiSelect — standalone pickers

@@ -40,7 +40,7 @@ type Language struct {
 var Languages = []Language{
 	{"en-GB", "English (UK)"},
 	{"en-US", "English (US)"},
-	{"de-DE", "Deutsch"},
+	{"zh-CN", "简体中文"},
 	{"cs-CZ", "Čeština"},
 	{"da-DK", "Dansk"},
 	{"es-ES", "Español"},

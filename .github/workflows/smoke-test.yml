@@ -57,6 +57,9 @@ jobs:
           adapt_plugin() {
             plugin_dir="$1"
             plugin_class=$(jq -r '.extra | to_entries[] | select(.key | endswith("-plugin-class")) | .value' "$plugin_dir/composer.json")
+            # The fixtures are third-party plugins that only carry German and English
+            # metadata. Copy the German values into the Chinese key so they keep
+            # exercising packaging and validation under the Shopwell locale.
             jq --arg plugin_class "$plugin_class" '
               .type = "shopwell-platform-plugin"
               | .require = ((.require // {}) | with_entries(
@@ -66,6 +69,12 @@ jobs:
                 ))
               | .extra |= with_entries(select((.key | endswith("-plugin-class")) | not))
               | .extra["shopwell-plugin-class"] = $plugin_class
+              | .extra |= with_entries(
+                  if (.key == "label" or .key == "description" or .key == "manufacturerLink" or .key == "supportLink")
+                     and ((.value | type) == "object") then
+                    .value |= (. + { "zh-CN": (.["de-DE"] // .["en-GB"] // "") })
+                  else . end
+                )
             ' "$plugin_dir/composer.json" > "$plugin_dir/composer.json.tmp"
             mv "$plugin_dir/composer.json.tmp" "$plugin_dir/composer.json"
 

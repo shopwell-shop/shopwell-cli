@@ -38,19 +38,12 @@ workflows:
         - 'actions/setup-go@v7.0.0'
         - 'actions/setup-node@v7.1.0'
         - 'shivammathur/setup-php@2.40.0'
-        - 'shopwell/github-actions@main'
+        - 'shopwell-shop/github-actions@main'
         - 'step-security/harden-runner@v2.22.3'
     '.github/workflows/release.yml':
-        - 'actions/attest@v4.2.2'
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
-        - 'actions/setup-node@v7.1.0'
-        - 'anchore/sbom-action@v0.24.3'
-        - 'determinatesystems/nix-installer-action@main'
-        - 'docker/setup-buildx-action@v4.4.1'
         - 'goreleaser/goreleaser-action@v7.3.0'
-        - 'octo-sts/action@v1.1.1'
-        - 'sigstore/cosign-installer@v4.1.2'
         - 'step-security/harden-runner@v2.22.3'
     '.github/workflows/schema-pages.yml':
         - 'actions/checkout@v7.0.1'
@@ -62,14 +55,9 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'shivammathur/setup-php@2.40.0'
-        - 'shopwell/build-project-action@v1.0.1'
+        - 'shopwell-shop/build-project-action@main'
         - 'step-security/harden-runner@v2.22.3'
 dependencies:
-    'actions/attest@v4.2.2':
-        ref: 'v4.2.2'
-        commit: 'sha1-1e69f48acb82d1966a394da916b4c1698aa569d6'
-        owner_id: 44036562
-        repo_id: 760701061
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
         commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
@@ -112,11 +100,6 @@ dependencies:
         repo_id: 496012378
         uses:
             - 'actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f'
-    'anchore/sbom-action@v0.24.3':
-        ref: 'v0.24.3'
-        commit: 'sha1-66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c'
-        owner_id: 16208487
-        repo_id: 399925381
     'codecov/codecov-action@v7.1.1':
         ref: 'v7.1.1'
         commit: 'sha1-303a32d7a59b442fa8d48b6a1cc6825c09c847a5'
@@ -124,11 +107,6 @@ dependencies:
         repo_id: 200299178
         uses:
             - 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd'
-    'determinatesystems/nix-installer-action@main':
-        ref: 'main'
-        commit: 'sha1-9383ce2bf08796b65508822f5982f49151badc4e'
-        owner_id: 80991770
-        repo_id: 588678074
     'docker/build-push-action@v7.4.0':
         ref: 'v7.4.0'
         commit: 'sha1-c3c9e263c25d99ce0380d002d59b67737d91b0dc'
@@ -164,31 +142,21 @@ dependencies:
         commit: 'sha1-f5be966e4a917d54244728e6a5fdcd1d93a35e6c'
         owner_id: 216188
         repo_id: 738284564
-    'octo-sts/action@v1.1.1':
-        ref: 'v1.1.1'
-        commit: 'sha1-f603d3be9d8dd9871a265776e625a27b00effe05'
-        owner_id: 160145231
-        repo_id: 749429568
     'shivammathur/setup-php@2.40.0':
         ref: '2.40.0'
         commit: 'sha1-eb7c497e18156a6bbabfef1d3a82760b9eda3962'
         owner_id: 1571086
         repo_id: 206578964
-    'shopwell/build-project-action@v1.0.1':
-        ref: 'v1.0.1'
-        commit: 'sha1-88233d3fdb6b4b6ad7085c45210085c51b727d82'
-        owner_id: 612628
-        repo_id: 1035878178
-    'shopwell/github-actions@main':
+    'shopwell-shop/build-project-action@main':
         ref: 'main'
-        commit: 'sha1-bfab5d308ecab430f2421dac6507e036c3f0977f'
-        owner_id: 612628
-        repo_id: 742404068
-    'sigstore/cosign-installer@v4.1.2':
-        ref: 'v4.1.2'
-        commit: 'sha1-6f9f17788090df1f26f669e9d70d6ae9567deba6'
-        owner_id: 71096353
-        repo_id: 351211695
+        commit: 'sha1-a7a941def3d8be87ae902207de4c1d43bc7ce7d3'
+        owner_id: 329940059
+        repo_id: 1401215211
+    'shopwell-shop/github-actions@main':
+        ref: 'main'
+        commit: 'sha1-6a3aa825a22ddabf3c40db59d740634d5c8d6806'
+        owner_id: 329940059
+        repo_id: 1401215153
     'step-security/harden-runner@v2.22.3':
         ref: 'v2.22.3'
         commit: 'sha1-46b06cea07f9e64621fdf066ba77ac6915163d43'

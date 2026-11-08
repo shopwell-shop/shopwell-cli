@@ -35,6 +35,7 @@ type SSHExecutor struct {
 	directory    string
 	identityFile string
 	phpBinary    string
+	phpArgs      []string
 
 	env         map[string]string
 	projectRoot string
@@ -53,10 +54,31 @@ func (s *SSHExecutor) php() string {
 	return s.phpBinary
 }
 
+// phpCommand returns the remote PHP invocation: the configured binary
+// followed by the configured extra arguments (e.g. "-d", "memory_limit=512M").
+func (s *SSHExecutor) phpCommand() []string {
+	return append([]string{s.php()}, s.phpArgs...)
+}
+
+// quotedPHP returns the remote PHP invocation with every part quoted for
+// POSIX sh, for snippets built as shell strings.
+func (s *SSHExecutor) quotedPHP() string {
+	parts := s.phpCommand()
+	quoted := make([]string, 0, len(parts))
+	for _, part := range parts {
+		quoted = append(quoted, shellQuoteArg(part))
+	}
+
+	return strings.Join(quoted, " ")
+}
+
 // RemotePHPCommand runs PHP without a directory change or a TTY.
 // Callers own stdin, stdout and stderr independently through Process.Cmd.
 func (s *SSHExecutor) RemotePHPCommand(ctx context.Context, args ...string) *Process {
 	command := []string{"exec", shellQuoteArg(s.php())}
+	for _, arg := range s.phpArgs {
+		command = append(command, shellQuoteArg(arg))
+	}
 	for _, arg := range args {
 		command = append(command, shellQuoteArg(arg))
 	}
@@ -170,7 +192,8 @@ func (s *SSHExecutor) command(ctx context.Context, name string, args ...string) 
 }
 
 func (s *SSHExecutor) ConsoleCommand(ctx context.Context, args ...string) *Process {
-	return s.command(ctx, s.php(), append([]string{consoleCommandName(ctx)}, args...)...)
+	php := append(s.phpCommand(), consoleCommandName(ctx))
+	return s.command(ctx, php[0], append(php[1:], args...)...)
 }
 
 func (s *SSHExecutor) ComposerCommand(ctx context.Context, args ...string) *Process {
@@ -178,7 +201,8 @@ func (s *SSHExecutor) ComposerCommand(ctx context.Context, args ...string) *Proc
 }
 
 func (s *SSHExecutor) PHPCommand(ctx context.Context, args ...string) *Process {
-	return s.command(ctx, s.php(), args...)
+	php := s.phpCommand()
+	return s.command(ctx, php[0], append(php[1:], args...)...)
 }
 
 func (s *SSHExecutor) NPMCommand(ctx context.Context, args ...string) *Process {
@@ -235,11 +259,11 @@ func (s *SSHExecutor) WithEnv(env map[string]string) Executor {
 		}
 	}
 
-	return &SSHExecutor{host: s.host, user: s.user, port: s.port, directory: s.directory, identityFile: s.identityFile, phpBinary: s.phpBinary, env: mergeEnv(s.env, env), projectRoot: s.projectRoot, relDir: s.relDir, shopCfg: s.shopCfg, envCfg: s.envCfg}
+	return &SSHExecutor{host: s.host, user: s.user, port: s.port, directory: s.directory, identityFile: s.identityFile, phpBinary: s.phpBinary, phpArgs: s.phpArgs, env: mergeEnv(s.env, env), projectRoot: s.projectRoot, relDir: s.relDir, shopCfg: s.shopCfg, envCfg: s.envCfg}
 }
 
 func (s *SSHExecutor) WithRelDir(relDir string) Executor {
-	return &SSHExecutor{host: s.host, user: s.user, port: s.port, directory: s.directory, identityFile: s.identityFile, phpBinary: s.phpBinary, env: s.env, projectRoot: s.projectRoot, relDir: relDir, shopCfg: s.shopCfg, envCfg: s.envCfg}
+	return &SSHExecutor{host: s.host, user: s.user, port: s.port, directory: s.directory, identityFile: s.identityFile, phpBinary: s.phpBinary, phpArgs: s.phpArgs, env: s.env, projectRoot: s.projectRoot, relDir: relDir, shopCfg: s.shopCfg, envCfg: s.envCfg}
 }
 
 func (s *SSHExecutor) AdminAPIClient(ctx context.Context) (*adminSdk.Client, error) {
@@ -274,21 +298,39 @@ func (s *SSHExecutor) EnvironmentStatus(_ context.Context) (bool, error) {
 func (s *SSHExecutor) DatabaseConnection(ctx context.Context) (*DatabaseConnection, error) {
 	conn := defaultDatabaseConnection()
 
-	databaseURL := s.env["DATABASE_URL"]
-
-	if databaseURL == "" {
-		var err error
-		databaseURL, err = s.remoteDatabaseURL(ctx)
+	// An explicit DATABASE_URL override skips the remote lookup entirely, the
+	// TLS variables then come from the executor env as well.
+	values := s.env
+	if s.env["DATABASE_URL"] == "" {
+		remote, err := s.remoteEnv(ctx)
 		if err != nil {
 			return nil, err
 		}
+
+		values = make(map[string]string, len(remote)+len(s.env))
+		for k, v := range remote {
+			values[k] = v
+		}
+		for k, v := range s.env {
+			if v != "" {
+				values[k] = v
+			}
+		}
 	}
 
-	if databaseURL != "" {
+	if databaseURL := values["DATABASE_URL"]; databaseURL != "" {
 		if err := applyDatabaseURL(conn, databaseURL); err != nil {
 			return nil, err
 		}
 	}
+
+	// Certificate paths refer to the remote host, so read them over SSH.
+	readFile := func(path string) ([]byte, error) {
+		out, err := s.runRemoteShell(ctx, "cat "+shellQuoteArg(path))
+		return []byte(out), err
+	}
+
+	applyDatabaseTLSEnv(conn, func(key string) string { return values[key] }, readFile)
 
 	dialTarget := conn.Addr()
 
@@ -306,26 +348,26 @@ func (s *SSHExecutor) DatabaseConnection(ctx context.Context) (*DatabaseConnecti
 	return conn, nil
 }
 
-// remoteDatabaseURL resolves DATABASE_URL on the remote host via
+// remoteEnv resolves the environment of the remote project via
 // `shopwell-deployment-helper dump-env`, which evaluates the full Symfony
 // dotenv cascade (including .env.local.php and variable interpolation) and
 // prints the resolved values as JSON.
-func (s *SSHExecutor) remoteDatabaseURL(ctx context.Context) (string, error) {
+func (s *SSHExecutor) remoteEnv(ctx context.Context) (map[string]string, error) {
 	if _, err := s.runRemoteShell(ctx, "test -x vendor/bin/shopwell-deployment-helper"); err != nil {
-		return "", errors.New("vendor/bin/shopwell-deployment-helper not found on the remote host: require shopwell/deployment-helper in the project (composer require shopwell/deployment-helper)")
+		return nil, errors.New("vendor/bin/shopwell-deployment-helper not found on the remote host: require shopwell/deployment-helper in the project (composer require shopwell/deployment-helper)")
 	}
 
-	stdout, err := s.runRemoteShell(ctx, shellQuoteArg(s.php())+" vendor/bin/shopwell-deployment-helper dump-env")
+	stdout, err := s.runRemoteShell(ctx, s.quotedPHP()+" vendor/bin/shopwell-deployment-helper dump-env")
 	if err != nil {
-		return "", fmt.Errorf("%w (dump-env requires a recent shopwell/deployment-helper: run composer update shopwell/deployment-helper on the remote host)", err)
+		return nil, fmt.Errorf("%w (dump-env requires a recent shopwell/deployment-helper: run composer update shopwell/deployment-helper on the remote host)", err)
 	}
 
 	var values map[string]string
 	if err := json.Unmarshal([]byte(stdout), &values); err != nil {
-		return "", fmt.Errorf("could not parse dump-env output: %w", err)
+		return nil, fmt.Errorf("could not parse dump-env output: %w", err)
 	}
 
-	return values["DATABASE_URL"], nil
+	return values, nil
 }
 
 // runRemoteShell executes a shell snippet inside the remote project
@@ -352,7 +394,7 @@ func (s *SSHExecutor) runRemoteShell(ctx context.Context, remoteCmd string) (str
 // on the remote host. DATABASE_URLs with host "localhost" make PHP connect
 // through this socket instead of TCP.
 func (s *SSHExecutor) remoteMySQLSocket(ctx context.Context) (string, error) {
-	stdout, err := s.runRemoteShell(ctx, shellQuoteArg(s.php())+` -r 'echo ini_get("pdo_mysql.default_socket") ?: ini_get("mysqli.default_socket");'`)
+	stdout, err := s.runRemoteShell(ctx, s.quotedPHP()+` -r 'echo ini_get("pdo_mysql.default_socket") ?: ini_get("mysqli.default_socket");'`)
 	if err != nil {
 		return "", err
 	}

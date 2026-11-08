@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/shopwell-shop/shopwell-cli/internal/executor"
+	"github.com/shopwell-shop/shopwell-cli/internal/shop"
 	"github.com/shopwell-shop/shopwell-cli/internal/testhelper"
 )
 
@@ -22,6 +24,10 @@ func newDumpFlagCommand(t *testing.T, flags map[string]string) *cobra.Command {
 	cmd.Flags().String("password", "", "")
 	cmd.Flags().Lookup("password").NoOptDefVal = passwordFlagPrompt
 	cmd.Flags().String("database", "", "")
+	cmd.Flags().String("ssl-mode", "", "")
+	cmd.Flags().String("ssl-ca", "", "")
+	cmd.Flags().String("ssl-cert", "", "")
+	cmd.Flags().String("ssl-key", "", "")
 	cmd.SetContext(t.Context())
 
 	for name, value := range flags {
@@ -82,6 +88,45 @@ func TestAssembleConnectionURIUsernameClearsPassword(t *testing.T) {
 	assert.Empty(t, cfg.Passwd)
 }
 
+func TestAnonymizationFromInstalledExtensions(t *testing.T) {
+	chdirOutsideProject(t)
+
+	tables, rules, err := anonymizationFromInstalledExtensions(t.Context())
+	require.NoError(t, err)
+	assert.Nil(t, tables)
+	assert.Nil(t, rules)
+
+	projectRoot := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "bin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(projectRoot, "bin", "console"), nil, 0o755))
+	testhelper.WriteFile(t, filepath.Join(projectRoot, "composer.json"),
+		testhelper.ComposerJSON{Require: map[string]string{"shopwell/core": "6.6.0"}}.String())
+
+	pluginDir := filepath.Join(projectRoot, "custom", "plugins", "SwagExample")
+	testhelper.WriteFile(t, filepath.Join(pluginDir, "composer.json"), testhelper.PluginComposer("swag/example", "1.0.0", `Swag\Example\SwagExample`).String())
+	testhelper.WriteFile(t, filepath.Join(pluginDir, ".config", "shopwell-extension.yml"), `
+compatibility_date: "2026-01-01"
+anonymize:
+  tables:
+    swag_example_token:
+      access_token: "''"
+  system_config:
+    - SwagExample.config.clientSecret
+`)
+
+	t.Setenv("PROJECT_ROOT", "")
+	t.Chdir(projectRoot)
+
+	tables, rules, err = anonymizationFromInstalledExtensions(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]map[string]string{
+		"swag_example_token": {"access_token": "''"},
+	}, tables)
+	assert.Equal(t, []shop.SystemConfigRule{
+		{Key: "SwagExample.config.clientSecret", Omit: true},
+	}, rules)
+}
+
 func TestAssembleConnectionURIDatabaseURLInsideProject(t *testing.T) {
 	projectRoot := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(projectRoot, "bin"), 0o755))
@@ -102,4 +147,57 @@ func TestAssembleConnectionURIDatabaseURLInsideProject(t *testing.T) {
 	assert.Equal(t, "app", cfg.User)
 	assert.Equal(t, "secret", cfg.Passwd)
 	assert.Equal(t, "other", cfg.DBName, "flag overrides the URL database")
+}
+
+func TestAssembleConnectionURITLSFlags(t *testing.T) {
+	chdirOutsideProject(t)
+	t.Setenv("DATABASE_URL", "mysql://app:pw@db.internal:3306/shop")
+
+	cfg, err := assembleConnectionURI(newDumpFlagCommand(t, nil))
+	require.NoError(t, err)
+	assert.Nil(t, cfg.TLS, "TLS stays off without configuration")
+
+	cfg, err = assembleConnectionURI(newDumpFlagCommand(t, map[string]string{"ssl-mode": "REQUIRED"}))
+	require.NoError(t, err)
+	require.NotNil(t, cfg.TLS)
+	assert.True(t, cfg.TLS.InsecureSkipVerify)
+
+	_, err = assembleConnectionURI(newDumpFlagCommand(t, map[string]string{"ssl-mode": "sometimes"}))
+	assert.ErrorContains(t, err, "invalid TLS mode")
+
+	_, err = assembleConnectionURI(newDumpFlagCommand(t, map[string]string{"ssl-ca": filepath.Join(t.TempDir(), "missing.pem")}))
+	assert.ErrorContains(t, err, "--ssl-ca")
+}
+
+func TestApplyTLSFlagsCAImpliesVerifyCA(t *testing.T) {
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	testhelper.WriteFile(t, caFile, "pem")
+
+	dbConn := &executor.DatabaseConnection{}
+	require.NoError(t, applyTLSFlags(newDumpFlagCommand(t, map[string]string{"ssl-ca": caFile}), dbConn))
+	assert.Equal(t, executor.TLSModeVerifyCA, dbConn.TLS.Mode)
+	assert.Equal(t, []byte("pem"), dbConn.TLS.CA)
+
+	// An already stricter mode from DATABASE_SSL_CA is kept.
+	dbConn = &executor.DatabaseConnection{TLS: executor.DatabaseTLS{Mode: executor.TLSModeVerifyIdentity}}
+	require.NoError(t, applyTLSFlags(newDumpFlagCommand(t, map[string]string{"ssl-ca": caFile}), dbConn))
+	assert.Equal(t, executor.TLSModeVerifyIdentity, dbConn.TLS.Mode)
+
+	// An explicit mode wins.
+	dbConn = &executor.DatabaseConnection{}
+	require.NoError(t, applyTLSFlags(newDumpFlagCommand(t, map[string]string{"ssl-ca": caFile, "ssl-mode": "verify-identity"}), dbConn))
+	assert.Equal(t, executor.TLSModeVerifyIdentity, dbConn.TLS.Mode)
+}
+
+func TestAssembleConnectionURIDisabledModeIgnoresUnreadableEnvCA(t *testing.T) {
+	chdirOutsideProject(t)
+	t.Setenv("DATABASE_URL", "mysql://app:pw@db.internal:3306/shop")
+	t.Setenv("DATABASE_SSL_CA", filepath.Join(t.TempDir(), "missing.pem"))
+
+	cfg, err := assembleConnectionURI(newDumpFlagCommand(t, map[string]string{"ssl-mode": "disabled"}))
+	require.NoError(t, err)
+	assert.Nil(t, cfg.TLS)
+
+	_, err = assembleConnectionURI(newDumpFlagCommand(t, nil))
+	assert.ErrorContains(t, err, "DATABASE_SSL_CA", "without an override the environment CA is still required")
 }

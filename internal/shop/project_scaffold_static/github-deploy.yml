@@ -9,6 +9,6 @@ jobs:
 
     steps:
       - name: Deploy
-        uses: shopwell/github-actions/project-deployer@main
+        uses: shopwell-shop/github-actions/project-deployer@main
         with:
           sshPrivateKey: ${{ secrets.SSH_PRIVATE_KEY }}

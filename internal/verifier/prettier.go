@@ -2,14 +2,30 @@ package verifier
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
-	"os/exec"
 	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
 
-	"golang.org/x/sync/errgroup"
+	"github.com/shopwell-shop/shopwell-cli/internal/validation"
 )
 
-var ignoredPaths = `
+type PrettierOutput struct {
+	Files []PrettierOutputFile
+}
+
+type PrettierOutputFile struct {
+	Path string
+	// Time holds the time required to process the file in milliseconds
+	Time      int
+	Unchanged bool
+}
+
+const ignoredPaths = `
 Resources/app/administration/.tmp/**
 Resources/app/storefront/dist/**
 Resources/public/**
@@ -21,50 +37,143 @@ package-lock.json
 
 type Prettier struct{}
 
-func (b Prettier) Name() string {
+func (p Prettier) Name() string {
 	return "prettier"
 }
 
-func (b Prettier) Format(ctx context.Context, config ToolConfig, dryRun bool) error {
-	var gr errgroup.Group
-
-	for _, sourceDirectory := range config.SourceDirectories {
-		sourceDirectory := sourceDirectory
-
-		if err := os.WriteFile(path.Join(sourceDirectory, ".prettierignore"), []byte(ignoredPaths), 0o644); err != nil {
-			return err
+func (p Prettier) Format(ctx context.Context, config ToolConfig, execution *ToolExecution, dryRun bool) ToolSummary {
+	if len(config.SourceDirectories) == 0 {
+		return ToolSummary{SkipReason: "no source directories"}
+	}
+	var changed atomic.Int64
+	runDirectories(config.SourceDirectories, func(directory string) {
+		ignore, err := os.CreateTemp(directory, ".shopwell-cli-prettier-ignore-*")
+		if err != nil {
+			execution.Fail(&ToolError{Err: fmt.Errorf("cannot create prettier ignore file: %w", err)})
+			return
 		}
-
+		defer func() {
+			if err := os.Remove(ignore.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+				execution.Fail(&ToolError{Err: fmt.Errorf("cannot remove prettier ignore file: %w", err)})
+			}
+		}()
+		_, writeErr := ignore.WriteString(ignoredPaths)
+		if err := errors.Join(writeErr, ignore.Close()); err != nil {
+			execution.Fail(&ToolError{Err: fmt.Errorf("cannot write prettier ignore file: %w", err)})
+			return
+		}
+		// Pass the ignore file relative to cmd.Dir: Prettier matches patterns relative
+		// to the ignore file's directory and resolves its cwd to the real path, so an
+		// absolute path below a symlinked directory would never match.
 		args := []string{
 			path.Join(config.ToolDirectory, "js", "node_modules", ".bin", "prettier"),
-			"--config",
-			path.Join(config.ToolDirectory, "js", "configs", "prettierrc.js"),
-			".",
+			"--config", path.Join(config.ToolDirectory, "js", "configs", "prettierrc.js"),
+			"--ignore-path", filepath.Base(ignore.Name()), "--ignore-path", ".gitignore", "--ignore-path", ".prettierignore", "--no-color", ".",
 		}
-
-		if !dryRun {
-			args = append(args, "--write")
+		operation := OperationFormat
+		if dryRun {
+			operation = OperationCheck
+			args = append(args, "--list-different")
 		} else {
-			args = append(args, "--check")
+			args = append(args, "--write")
 		}
-
-		gr.Go(func() error {
-			cmd := exec.CommandContext(ctx, "node", args...)
-			cmd.Dir = sourceDirectory
-			cmd.Stderr = os.Stderr
-			cmd.Stdout = os.Stdout
-
-			if err := cmd.Run(); err != nil {
-				_ = os.Remove(path.Join(sourceDirectory, ".prettierignore"))
-
-				return err
+		cmd := CommandContext(ctx, "node", args...)
+		cmd.Dir = directory
+		subprocess := execution.Run(operation, cmd)
+		output, runErr := subprocess.Stdout, subprocess.Err
+		if !p.isExpectedPrettierExit(runErr, dryRun) || strings.Contains(subprocess.Stderr, "[error]") || (runErr != nil && strings.TrimSpace(output) == "") {
+			if runErr == nil {
+				runErr = errors.New("prettier reported an error")
 			}
+			execution.Fail(subprocess.ToolError(fmt.Errorf("cannot run prettier in %s: %w", directory, runErr)))
+			return
+		}
+		parsed, err := p.Parse(output)
+		if err != nil {
+			execution.Fail(subprocess.ToolError(fmt.Errorf("cannot parse prettier output: %w", err)))
+			return
+		}
+		for _, file := range parsed.Files {
+			if file.Unchanged {
+				continue
+			}
+			changed.Add(1)
+			if !dryRun {
+				continue
+			}
+			filePath := file.Path
+			if !filepath.IsAbs(filePath) {
+				filePath = filepath.Join(directory, filePath)
+			}
+			execution.AddFindings(validation.CheckResult{
+				Path:     validation.NormalizeSourcePath(filePath, config.RootDir),
+				Message:  "Formatting violations found. Run format without dry-run to resolve them.",
+				Severity: validation.SeverityError, Identifier: "prettier/format",
+			})
+		}
+	})
+	if !dryRun {
+		return ToolSummary{Note: fileChangeNote(int(changed.Load()), "formatted")}
+	}
+	return ToolSummary{}
+}
 
-			return os.Remove(path.Join(sourceDirectory, ".prettierignore"))
-		})
+// isExpectedPrettierExit reports whether Prettier completed with an expected exit status.
+// Exit code 1 is accepted only for dry runs. Stderr is checked separately for errors.
+// All other exit codes and execution errors are treated as failures.
+func (p Prettier) isExpectedPrettierExit(err error, dryRun bool) bool {
+	return err == nil || (dryRun && expectedExit(err, 1))
+}
+
+// Parse converts Prettier output into structured results.
+// Supports both --list-different and --write output formats.
+func (p Prettier) Parse(output string) (PrettierOutput, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return PrettierOutput{}, nil
 	}
 
-	return gr.Wait()
+	var files []PrettierOutputFile
+	var parsingErrors []error
+
+	for line := range strings.SplitSeq(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		file := PrettierOutputFile{}
+
+		// --write marks files that did not require changes.
+		if strings.HasSuffix(line, " (unchanged)") {
+			file.Unchanged = true
+			line = strings.TrimSuffix(line, " (unchanged)")
+		}
+
+		// --write includes processing time in milliseconds.
+		if idx := strings.LastIndex(line, " "); idx >= 0 && strings.HasSuffix(line, "ms") {
+			time, err := strconv.Atoi(strings.TrimSuffix(line[idx+1:], "ms"))
+			if err != nil {
+				parsingErrors = append(parsingErrors, fmt.Errorf(
+					"failed to parse processing time for %q: %w",
+					line,
+					err))
+				continue
+			}
+
+			file.Time = time
+			line = line[:idx]
+		}
+
+		file.Path = line
+		files = append(files, file)
+	}
+
+	if len(parsingErrors) > 0 {
+		return PrettierOutput{}, errors.Join(parsingErrors...)
+	}
+
+	return PrettierOutput{Files: files}, nil
 }
 
 func init() {

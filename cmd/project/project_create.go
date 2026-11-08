@@ -1,21 +1,53 @@
 package project
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/shyim/go-composer/repository"
 	"github.com/spf13/cobra"
 
+	"github.com/shopwell-shop/shopwell-cli/internal/executor"
+	"github.com/shopwell-shop/shopwell-cli/internal/git"
 	"github.com/shopwell-shop/shopwell-cli/internal/proxy"
 	"github.com/shopwell-shop/shopwell-cli/internal/shop"
 	"github.com/shopwell-shop/shopwell-cli/internal/system"
+	"github.com/shopwell-shop/shopwell-cli/internal/tracking"
 	"github.com/shopwell-shop/shopwell-cli/internal/tui"
+	"github.com/shopwell-shop/shopwell-cli/logging"
 )
 
 const (
 	// projectNameHelp is the help text shown under the project name input.
 	projectNameHelp = "The name of the project directory to create (leave empty to use the current directory)"
 )
+
+// failed_step values of the command event, in the order the steps run; see docs/TELEMETRY.md.
+const (
+	createStepValidateComposeProjectName       = "validate_compose_project_name"
+	createStepValidateDocker                   = "validate_docker"
+	createStepValidatePHPVersion               = "validate_php_version"
+	createStepPackagistFetchVersions           = "packagist_fetch_versions"
+	createStepWizardQuestions                  = "wizard_questions"
+	createStepWizardDockerCheck                = "wizard_docker_check"
+	createStepWizardConfirm                    = "wizard_confirm"
+	createStepPreflightResolveVersion          = "preflight_resolve_version"
+	createStepPreflightValidateProjectSettings = "preflight_validate_project_settings"
+	createStepPreflightPHPVersion              = "preflight_php_version"
+	createStepPreflightDependencies            = "preflight_dependencies"
+	createStepPreflightSecurityAdvisories      = "preflight_security_advisories"
+	createStepPreflightIncompatibilities       = "preflight_incompatibilities"
+	createStepScaffold                         = "scaffold"
+	createStepComposerInstall                  = "composer_install"
+	createStepComposerSecurityAdvisories       = "composer_security_advisories"
+	createStepDockerSetup                      = "docker_setup"
+	createStepDockerSetupWriteCompose          = "docker_setup_write_compose"
+	createStepWriteConfig                      = "write_config"
+	createStepGitInit                          = "git_init"
+)
+
+// errCreateCancelled stops the creation when the user declines to continue.
+var errCreateCancelled = tracking.NewCancelled("project creation cancelled")
 
 type createOptions struct {
 	projectFolder      string
@@ -39,6 +71,9 @@ type createOptions struct {
 	// (<name>.<baseDomain>) through the shared proxy instead of a fixed port.
 	// Only meaningful with Docker.
 	useLocalDomain bool
+	// composeProjectName, when set, is written to .env as COMPOSE_PROJECT_NAME
+	// instead of the generated sw-<folder>-<hash> value.
+	composeProjectName string
 	// setupProxyNow runs the one-time machine setup (DNS + HTTPS trust, needs
 	// sudo) inline during create, so the local domain works immediately. Set
 	// only when the user opts in and the machine is not configured yet.
@@ -101,21 +136,24 @@ var projectCreateCmd = &cobra.Command{
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		opts := parseCreateFlags(cmd, args)
+		opts, err := parseCreateFlags(cmd, args)
+		if err != nil {
+			return err
+		}
 
 		// Fail fast when Docker is explicitly requested but unavailable, before
 		// the network fetch and (interactive) wizard. The interactive Docker
 		// question additionally blocks the Docker choice with guidance, and
 		// validateAndPreflight keeps a final safety net.
 		if cmd.PersistentFlags().Changed("docker") && opts.useDocker {
-			if missing := dockerAvailabilityForCreate(cmd.Context()); missing != nil {
-				return dockerUnavailableError(missing)
+			if missing := dockerAvailabilityForCreate(cmd.Context()); len(missing) > 0 {
+				return tracking.FailedAt(createStepValidateDocker, dockerUnavailableError(missing))
 			}
 		}
 
 		if opts.phpVersionExplicit {
 			if err := shop.ValidatePHPVersion(opts.phpVersion); err != nil {
-				return err
+				return tracking.FailedAt(createStepValidatePHPVersion, err)
 			}
 		}
 
@@ -125,7 +163,7 @@ var projectCreateCmd = &cobra.Command{
 
 		pkg, err := repository.New(packagistURL, nil).GetPackage(cmd.Context(), "shopwell/core")
 		if err != nil {
-			return err
+			return tracking.FailedAt(createStepPackagistFetchVersions, err)
 		}
 		releases := pkg.Versions
 		filteredVersions := shop.FilterInstallVersions(releases)
@@ -155,11 +193,38 @@ var projectCreateCmd = &cobra.Command{
 			_ = runInlineProxySetup(cmd.Context(), proxy.BaseDomain())
 		}
 
-		if err := scaffoldProject(cmd.Context(), &opts, chosenVersion); err != nil {
-			return err
+		folder, err := scaffoldProject(cmd.Context(), &opts, chosenVersion)
+		if err != nil {
+			return tracking.FailedAt(createStepScaffold, err)
+		}
+		if err := installAndFinalize(cmd, &opts, phpConstraint, chosenVersion); err != nil {
+			if errors.Is(err, executor.ErrDockerCleanup) {
+				return err
+			}
+			return folder.Rollback(cmd.Context(), err)
+		}
+		if err := cmd.Context().Err(); err != nil {
+			return folder.Rollback(cmd.Context(), err)
+		}
+		// Git is optional post-install work: preserve the completed project if it fails.
+		if opts.initGit {
+			logging.FromContext(cmd.Context()).Infof("Initializing Git repository")
+			if err := git.Init(cmd.Context(), opts.projectFolder); err != nil {
+				if cmd.Context().Err() != nil {
+					return folder.Rollback(cmd.Context(), cmd.Context().Err())
+				}
+				return tracking.FailedAt(createStepGitInit, fmt.Errorf("cannot initialize git repository: %w", err))
+			}
+		}
+		if err := cmd.Context().Err(); err != nil {
+			return folder.Rollback(cmd.Context(), err)
+		}
+		printCreateSummary(cmd.Context(), &opts)
+		if err := cmd.Context().Err(); err != nil {
+			return folder.Rollback(cmd.Context(), err)
 		}
 
-		return installAndFinalize(cmd, &opts, phpConstraint, chosenVersion)
+		return nil
 	},
 }
 
@@ -167,7 +232,7 @@ var projectCreateCmd = &cobra.Command{
 // local repository server instead of Packagist.
 var packagistURL = repository.PackagistURL
 
-func parseCreateFlags(cmd *cobra.Command, args []string) createOptions {
+func parseCreateFlags(cmd *cobra.Command, args []string) (createOptions, error) {
 	useDocker, _ := cmd.PersistentFlags().GetBool("docker")
 	withElasticsearch, _ := cmd.PersistentFlags().GetBool("with-elasticsearch")
 	withAMQP, _ := cmd.PersistentFlags().GetBool("with-amqp")
@@ -178,6 +243,12 @@ func parseCreateFlags(cmd *cobra.Command, args []string) createOptions {
 	deploymentMethod, _ := cmd.PersistentFlags().GetString("deployment")
 	ciSystem, _ := cmd.PersistentFlags().GetString("ci")
 	phpVersion, _ := cmd.PersistentFlags().GetString("php-version")
+	composeProjectName, _ := cmd.PersistentFlags().GetString("compose-project-name")
+	if cmd.PersistentFlags().Changed("compose-project-name") {
+		if err := shop.ValidateComposeProjectName(composeProjectName); err != nil {
+			return createOptions{}, tracking.FailedAt(createStepValidateComposeProjectName, err)
+		}
+	}
 
 	if cmd.PersistentFlags().Changed("without-elasticsearch") {
 		withoutElasticsearch, _ := cmd.PersistentFlags().GetBool("without-elasticsearch")
@@ -194,6 +265,7 @@ func parseCreateFlags(cmd *cobra.Command, args []string) createOptions {
 		noAudit:               noAudit,
 		initGit:               initGit,
 		useLocalDomain:        localDomain,
+		composeProjectName:    composeProjectName,
 		selectedVersion:       versionFlag,
 		selectedDeployment:    deploymentMethod,
 		selectedCI:            ciSystem,
@@ -211,7 +283,7 @@ func parseCreateFlags(cmd *cobra.Command, args []string) createOptions {
 		opts.selectedVersion = args[1]
 	}
 
-	return opts
+	return opts, nil
 }
 
 func applyNonInteractiveDefaults(opts *createOptions) error {
@@ -259,7 +331,9 @@ func init() {
 		}, cobra.ShellCompDirectiveNoFileComp
 	})
 	projectCreateCmd.PersistentFlags().String("ci", "", "CI/CD system to configure (none, github, gitlab)")
+	_ = projectCreateCmd.RegisterFlagCompletionFunc("ci", cobra.FixedCompletions([]string{shop.CINone, shop.CIGitHub, shop.CIGitLab}, cobra.ShellCompDirectiveNoFileComp))
 	projectCreateCmd.PersistentFlags().String("php-version", "", "PHP version for the project (e.g. 8.4); uses the local PHP version for local projects or the image tag for Docker projects")
+	projectCreateCmd.PersistentFlags().String("compose-project-name", "", "Compose project name written to .env (Docker default sw-<folder>-<hash>)")
 	_ = projectCreateCmd.RegisterFlagCompletionFunc("php-version", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return shop.SupportedPHPVersions, cobra.ShellCompDirectiveNoFileComp
 	})

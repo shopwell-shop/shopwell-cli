@@ -12,6 +12,6 @@ jobs:
 
     steps:
       - name: Project Validate
-        uses: shopwell/github-actions/project-validate@main
+        uses: shopwell-shop/github-actions/project-validate@main
         with:
           phpVersion: '8.4'

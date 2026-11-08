@@ -6,19 +6,24 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/shopwell-shop/shopwell-cli/cmd/account"
 	"github.com/shopwell-shop/shopwell-cli/cmd/ai"
 	"github.com/shopwell-shop/shopwell-cli/cmd/extension"
 	"github.com/shopwell-shop/shopwell-cli/cmd/project"
 	accountApi "github.com/shopwell-shop/shopwell-cli/internal/account-api"
+	"github.com/shopwell-shop/shopwell-cli/internal/ai/agent"
 	"github.com/shopwell-shop/shopwell-cli/internal/cliversion"
 	"github.com/shopwell-shop/shopwell-cli/internal/system"
+	"github.com/shopwell-shop/shopwell-cli/internal/tracking"
+	"github.com/shopwell-shop/shopwell-cli/internal/tui"
 	"github.com/shopwell-shop/shopwell-cli/logging"
 )
 
@@ -30,6 +35,9 @@ var rootCmd = &cobra.Command{
 	Use:   "shopwell-cli",
 	Short: "Build, develop, and manage Shopwell projects and extensions",
 	Long:  `Build, develop, and manage Shopwell projects and extensions from the command line.`,
+	// The general CLI skill is recommended for any command; a subcommand can
+	// override this annotation to recommend a more specific skill.
+	Annotations: map[string]string{agent.RecommendedSkillAnnotation: "shopwell-cli"},
 }
 
 // Execute runs the root command and returns the process exit code after cleanup.
@@ -48,11 +56,15 @@ func Execute(ctx context.Context) int {
 	updateHandle, updateCancel := startUpdateCheck(ctx, args)
 	defer updateCancel()
 
+	name, _ := commandEventName(args)
+	shopwellVersion := tracking.StartShopwellVersion(name)
 	start := time.Now()
 	err := rootCmd.ExecuteContext(ctx)
 
-	trackCommandExecution(ctx, args, start, err)
+	duration := time.Since(start)
+	trackCommandExecution(ctx, args, duration, err, shopwellVersion.Ready())
 	printUpdateHint(ctx, os.Stderr, updateHandle.Wait(ctx).Release)
+	printAIHint(ctx, os.Stderr, args)
 
 	return exitCode(ctx, err)
 }
@@ -65,11 +77,21 @@ func exitCode(ctx context.Context, err error) int {
 		return 0
 	}
 
-	if !errors.Is(err, project.ErrEnvironmentDown) && !errors.Is(err, project.ErrProxyNotRegistered) && !errors.Is(err, project.ErrProxyVerificationFailed) {
+	var silent logging.SilenceError
+	if !errors.As(err, &silent) {
 		logging.FromContext(ctx).Errorln(err)
 	}
 
 	return 1
+}
+
+// helpWidth is the column flag descriptions wrap at; 0 leaves piped help unwrapped.
+func helpWidth() int {
+	if !isatty.IsTerminal(os.Stdout.Fd()) {
+		return 0
+	}
+
+	return tui.TerminalWidth()
 }
 
 func init() {
@@ -80,6 +102,14 @@ func init() {
 
 	rootCmd.SilenceErrors = true
 
+	cobra.AddTemplateFunc("wrappedFlagUsages", func(flags *pflag.FlagSet) string {
+		return flags.FlagUsagesWrapped(helpWidth())
+	})
+	rootCmd.SetUsageTemplate(strings.NewReplacer(
+		".LocalFlags.FlagUsages", "wrappedFlagUsages .LocalFlags",
+		".InheritedFlags.FlagUsages", "wrappedFlagUsages .InheritedFlags",
+	).Replace(rootCmd.UsageTemplate()))
+
 	// Cobra prints the usage block for every error a command returns. Flags,
 	// argument counts and flag groups are validated before the pre-run hooks
 	// fire, so silencing usage here keeps it for invocation mistakes while
@@ -89,6 +119,11 @@ func init() {
 	cobra.EnableTraverseRunHooks = true
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		cmd.SilenceUsage = true
+		// Resolve the background before any Bubble Tea program owns stdin;
+		// a lazy query from inside a running program would race its reader.
+		if system.IsInteractionEnabled(cmd.Context()) {
+			tui.HasDarkBackground()
+		}
 		return nil
 	}
 
@@ -99,6 +134,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("verbose", false, "Show debug logs and detailed tool output")
 	rootCmd.PersistentFlags().BoolP("no-interaction", "n", false, "Run without prompting; commands use defaults or fail where input is needed")
 	rootCmd.PersistentFlags().Bool("no-update-hint", false, "Skip checking for a newer shopwell-cli version")
+	rootCmd.PersistentFlags().Bool("no-ai-hint", false, "Skip the AI client skill recommendation")
 
 	project.Register(rootCmd)
 	extension.Register(rootCmd)

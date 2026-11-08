@@ -10,7 +10,10 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/shyim/go-version"
+
 	"github.com/shopwell-shop/shopwell-cli/internal/docker"
+	"github.com/shopwell-shop/shopwell-cli/internal/envfile"
 	"github.com/shopwell-shop/shopwell-cli/logging"
 )
 
@@ -41,6 +44,9 @@ var dockerfileTemplate string
 //go:embed project_scaffold_static/dockerignore
 var dockerignoreContent string
 
+//go:embed project_scaffold_static/admin_worker.yaml
+var adminWorkerConfig string
+
 // ShopwellProjectScaffold describes the files and directories of a new
 // Shopwell project. CLI concerns such as prompting, tracking, and detecting
 // local tools intentionally live outside this type.
@@ -55,6 +61,9 @@ type ShopwellProjectScaffold struct {
 	UseAMQP             bool
 	NoAudit             bool
 	SymfonyCLIInstalled bool
+	// ComposeProjectName, when set, is written to .env as COMPOSE_PROJECT_NAME
+	// instead of the generated sw-<folder>-<hash> value.
+	ComposeProjectName string
 }
 
 // Normalize applies project defaults and deployment-specific requirements.
@@ -84,31 +93,64 @@ func (s ShopwellProjectScaffold) Validate() error {
 	if err := ValidateDeploymentMethod(s.DeploymentMethod); err != nil {
 		return err
 	}
+	if err := ValidateCISystem(s.CISystem); err != nil {
+		return err
+	}
+	if s.ComposeProjectName == "" {
+		return nil
+	}
 
-	return ValidateCISystem(s.CISystem)
+	return ValidateComposeProjectName(s.ComposeProjectName)
 }
 
 // Scaffold creates the initial project structure without installing its
-// Composer dependencies.
+// Composer dependencies. A failed scaffold removes everything it wrote.
 func (s *ShopwellProjectScaffold) Scaffold(ctx context.Context) error {
+	_, err := s.ScaffoldWithCleanup(ctx)
+	return err
+}
+
+// ScaffoldWithCleanup returns the prepared folder so installation failures can
+// roll back the same creation attempt. Validation failures never trigger cleanup.
+func (s *ShopwellProjectScaffold) ScaffoldWithCleanup(ctx context.Context) (*ProjectFolder, error) {
 	s.Normalize()
+	folder, err := NewProjectFolder(s.ProjectFolder)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.Validate(); err != nil {
-		return err
+		return nil, err
 	}
-
-	if err := os.MkdirAll(s.ProjectFolder, os.ModePerm); err != nil {
-		return err
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+	if err := folder.Prepare(); err != nil {
+		return nil, folder.Rollback(ctx, err)
+	}
+	if err := s.scaffold(ctx); err != nil {
+		return nil, folder.Rollback(ctx, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, folder.Rollback(ctx, err)
+	}
+	return folder, nil
+}
 
+func (s *ShopwellProjectScaffold) scaffold(ctx context.Context) error {
 	logging.FromContext(ctx).Infof("Setting up Shopwell %s", s.Version)
 
 	if err := s.WriteComposerJson(ctx); err != nil {
 		return err
 	}
 
-	envContent, err := EnvFileContent(s.UseDocker, s.ProjectFolder)
+	name, err := resolveComposeProjectName(s.UseDocker, s.ProjectFolder, s.ComposeProjectName)
 	if err != nil {
 		return err
+	}
+
+	envContent := ""
+	if name != "" {
+		envContent = envfile.ComposeProjectNameEnvKey + "=" + name + "\n"
 	}
 
 	files := []struct {
@@ -130,6 +172,18 @@ func (s *ShopwellProjectScaffold) Scaffold(ctx context.Context) error {
 		filepath.Join("custom", "static-plugins"),
 	} {
 		if err := os.MkdirAll(filepath.Join(s.ProjectFolder, path), os.ModePerm); err != nil {
+			return err
+		}
+	}
+
+	// Disable the browser-based admin worker: the Docker environment then runs a
+	// dedicated queue worker instead.
+	if s.UseDocker && supportsDedicatedWorker(s.Version) {
+		packagesDir := filepath.Join(s.ProjectFolder, "config", "packages")
+		if err := os.MkdirAll(packagesDir, os.ModePerm); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(packagesDir, "admin_worker.yaml"), []byte(adminWorkerConfig), os.ModePerm); err != nil {
 			return err
 		}
 	}
@@ -164,6 +218,22 @@ func (s *ShopwellProjectScaffold) WriteComposerJson(ctx context.Context) error {
 	}
 
 	return os.WriteFile(filepath.Join(s.ProjectFolder, "composer.json"), []byte(composerJSON), os.ModePerm)
+}
+
+// dedicatedWorkerConstraint is the Shopwell version range whose Symfony (7.1+)
+// supports the `messenger:consume --all` the Docker queue worker runs.
+var dedicatedWorkerConstraint = version.MustConstraints(version.NewConstraint(">=6.6.4.0"))
+
+// supportsDedicatedWorker reports whether the Docker queue worker works with the
+// given Shopwell version. Of the dev branches, only dev-trunk is known to be
+// recent enough; the others keep the admin worker.
+func supportsDedicatedWorker(rawVersion string) bool {
+	v, err := version.NewVersion(rawVersion)
+	if err != nil {
+		return rawVersion == VersionTrunk
+	}
+
+	return dedicatedWorkerConstraint.Check(v)
 }
 
 func envLocalContent(useDocker bool) string {

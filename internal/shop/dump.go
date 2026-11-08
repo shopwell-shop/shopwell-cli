@@ -3,6 +3,7 @@ package shop
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,8 +24,23 @@ type DumpDatabaseOptions struct {
 	Compression mysqldump.Compression
 	// Clean excludes volatile tables (cart, messenger_messages, ...) from the data dump
 	Clean bool
-	// Anonymize rewrites customer related columns with faker data
+	// SkipCustomerData excludes customer and order data, includes Clean
+	SkipCustomerData bool
+	// NoData adds table names or glob patterns to export with schema only.
+	NoData []string
+	// Anonymize rewrites customer related columns with faker data and merges
+	// extension-declared tables and system config keys
 	Anonymize bool
+	// ResetIdentity removes the source app identity and registrations, preserving
+	// disconnected records according to foreign key rules.
+	ResetIdentity bool
+	// ExtensionTables are column rewrites declared by installed extensions.
+	// Applied only when Anonymize is true. Project dump.rewrite values and the built-in rules win.
+	ExtensionTables map[string]map[string]string
+	// SystemConfigRules anonymize system_config rows declared by installed extensions.
+	// Applied only when Anonymize is true. A project rewrite of configuration_value wins
+	// over replacement values. Omitted keys are still excluded.
+	SystemConfigRules []SystemConfigRule
 	// SkipLockTables disables locking the tables during the dump
 	SkipLockTables bool
 	// Quick enables the mysqldump quick mode
@@ -33,52 +49,35 @@ type DumpDatabaseOptions struct {
 	Parallel int
 	// InsertIntoLimit caps the rows per INSERT statement (0 = auto, takes priority over Quick when set)
 	InsertIntoLimit int
+	// InsertIntoMaxBytes targets the maximum INSERT size in bytes (0 = default).
+	// Individual rows larger than the target are emitted on their own.
+	InsertIntoMaxBytes int
 	// LimitOverrides contains "table=rows" entries limiting the dumped rows per table
 	LimitOverrides []string
 }
 
 // DumpDatabase dumps the database described by sqlCfg to opts.Output. cfg may
-// be nil; Clean, Anonymize and LimitOverrides are applied to cfg in place.
+// be nil; dump options are applied to cfg in place.
 func DumpDatabase(ctx context.Context, sqlCfg *mysql.Config, cfg *ConfigDump, opts DumpDatabaseOptions) error {
-	db, err := sql.Open("mysql", sqlCfg.FormatDSN())
+	connector, err := mysql.NewConnector(sqlCfg)
 	if err != nil {
 		return err
 	}
+
+	db := sql.OpenDB(connector)
 	defer func() { _ = db.Close() }()
 
 	return dumpDatabase(ctx, db, cfg, opts)
 }
 
 func dumpDatabase(ctx context.Context, db *sql.DB, cfg *ConfigDump, opts DumpDatabaseOptions) error {
-	if cfg == nil {
-		cfg = &ConfigDump{}
-	}
-
-	if opts.Clean {
-		cfg.EnableClean()
-	}
-
-	if opts.Anonymize {
-		cfg.EnableAnonymization()
-	}
-
-	if err := applyLimitOverrides(cfg, opts.LimitOverrides); err != nil {
+	cfg, err := prepareDumpConfig(cfg, opts)
+	if err != nil {
 		return err
 	}
 
-	cfg.NormalizeFakerExpressions()
-
 	dumper := mysqldump.NewMySQLDumper(db)
-	dumper.LockTables = !opts.SkipLockTables
-	dumper.Quick = opts.Quick
-	dumper.Parallel = opts.Parallel
-	dumper.InsertIntoLimit = opts.InsertIntoLimit
-	dumper.SelectMap = cfg.Rewrite
-	dumper.WhereMap = cfg.Where
-	dumper.NoData = cfg.NoData
-	dumper.Ignore = cfg.Ignore
-
-	dumper.LimitMap = cfg.Limit
+	configureDumper(dumper, cfg, opts)
 
 	w, output, err := mysqldump.OpenOutput(opts.Output, opts.Compression)
 	if err != nil {
@@ -103,6 +102,72 @@ func dumpDatabase(ctx context.Context, db *sql.DB, cfg *ConfigDump, opts DumpDat
 	logging.FromContext(ctx).Infof("Successfully created the dump %s", output)
 
 	return nil
+}
+
+// configureDumper applies the prepared dump config and options.
+func configureDumper(dumper *mysqldump.Dumper, cfg *ConfigDump, opts DumpDatabaseOptions) {
+	dumper.LockTables = !opts.SkipLockTables
+	dumper.Quick = opts.Quick
+	dumper.Parallel = opts.Parallel
+	dumper.InsertIntoLimit = opts.InsertIntoLimit
+	dumper.InsertIntoMaxBytes = opts.InsertIntoMaxBytes
+	dumper.SelectMap = cfg.Rewrite
+	dumper.WhereMap = cfg.Where
+	dumper.NoData = cfg.NoData
+	dumper.Ignore = cfg.Ignore
+	dumper.LimitMap = cfg.Limit
+	if opts.ResetIdentity {
+		dumper.BuildRowExclusions = resetIdentityExclusions
+	}
+}
+
+// prepareDumpConfig applies data exclusions, identity reset, anonymization, and limits to cfg.
+// Extension tables are merged after the built-in customer anonymization, so they
+// only fill columns that neither the project nor the built-in rules set. Extension
+// system config keys own system_config.configuration_value unless the project already rewrote it.
+func prepareDumpConfig(cfg *ConfigDump, opts DumpDatabaseOptions) (*ConfigDump, error) {
+	if cfg == nil {
+		cfg = &ConfigDump{}
+	}
+
+	if opts.Anonymize && (opts.SkipCustomerData || cfg.SkipCustomerData) {
+		return nil, errors.New("cannot anonymize a dump with customer data excluded: disable \"--skip-customer-data\" and \"dump.skip_customer_data\"")
+	}
+
+	cfg.NoData = appendMissing(cfg.NoData, opts.NoData)
+	if opts.SkipCustomerData || cfg.SkipCustomerData {
+		cfg.EnableSkipCustomerData()
+	}
+
+	if opts.Clean {
+		cfg.EnableClean()
+	}
+
+	if opts.ResetIdentity {
+		cfg.EnableResetIdentity()
+	}
+
+	if opts.Anonymize {
+		projectOwnsSystemConfigValue := cfg.hasColumnRewrite("system_config", "configuration_value")
+		cfg.EnableAnonymization()
+		cfg.MergeRewrite(opts.ExtensionTables)
+		rewrite, where, err := BuildSystemConfigAnonymization(opts.SystemConfigRules)
+		if err != nil {
+			return nil, err
+		}
+		if !projectOwnsSystemConfigValue && rewrite != "" {
+			cfg.forceRewrite("system_config", "configuration_value", rewrite)
+		}
+		cfg.mergeWhere("system_config", where)
+	}
+
+	if err := applyLimitOverrides(cfg, opts.LimitOverrides); err != nil {
+		return nil, err
+	}
+
+	cfg.NormalizeFakerExpressions()
+
+	return cfg, nil
 }
 
 // applyLimitOverrides merges "table=rows" entries into the dump config,

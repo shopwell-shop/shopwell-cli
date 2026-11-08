@@ -9,7 +9,7 @@ import (
 	"github.com/shopwell-shop/shopwell-cli/internal/tracking"
 )
 
-func scaffoldProject(ctx context.Context, opts *createOptions, chosenVersion string) error {
+func scaffoldProject(ctx context.Context, opts *createOptions, chosenVersion string) (*shop.ProjectFolder, error) {
 	go tracking.Track(ctx, tracking.EventProjectCreate, map[string]string{
 		tracking.TagVersion:           opts.selectedVersion,
 		tracking.TagDeployment:        opts.selectedDeployment,
@@ -23,19 +23,20 @@ func scaffoldProject(ctx context.Context, opts *createOptions, chosenVersion str
 	scaffold := newShopwellProjectScaffold(opts, chosenVersion)
 	scaffold.SymfonyCLIInstalled = !opts.useDocker && system.IsSymfonyCliInstalled()
 
-	return scaffold.Scaffold(ctx)
+	return scaffold.ScaffoldWithCleanup(ctx)
 }
 
 func newShopwellProjectScaffold(opts *createOptions, chosenVersion string) shop.ShopwellProjectScaffold {
 	return shop.ShopwellProjectScaffold{
-		ProjectFolder:    opts.projectFolder,
-		Version:          chosenVersion,
-		DeploymentMethod: opts.selectedDeployment,
-		CISystem:         opts.selectedCI,
-		PHPVersion:       opts.phpVersion,
-		UseDocker:        opts.useDocker,
-		UseElasticsearch: opts.withElasticsearch,
-		UseAMQP:          opts.withAMQP,
-		NoAudit:          opts.noAudit,
+		ProjectFolder:      opts.projectFolder,
+		Version:            chosenVersion,
+		DeploymentMethod:   opts.selectedDeployment,
+		CISystem:           opts.selectedCI,
+		PHPVersion:         opts.phpVersion,
+		UseDocker:          opts.useDocker,
+		UseElasticsearch:   opts.withElasticsearch,
+		UseAMQP:            opts.withAMQP,
+		NoAudit:            opts.noAudit,
+		ComposeProjectName: opts.composeProjectName,
 	}
 }

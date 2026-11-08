@@ -2,41 +2,43 @@ package project
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/shopwell-shop/shopwell-cli/internal/shop"
-	"github.com/shopwell-shop/shopwell-cli/internal/system"
 	"github.com/shopwell-shop/shopwell-cli/internal/validation"
 	"github.com/shopwell-shop/shopwell-cli/internal/verifier"
-	"github.com/shopwell-shop/shopwell-cli/logging"
 )
 
 var projectValidateCmd = &cobra.Command{
 	Use:   "validate [path]",
 	Short: "Run static analysis and Shopwell checks on a project",
-	Long:  "Validate the project's own code, such as extensions in custom/ and configured bundles. Packages that Composer installs into vendor/ are not validated. Runs on a temporary copy unless --no-copy is passed.",
+	Long:  "Validate the project's own code, such as extensions in custom/ and configured bundles. Packages that Composer installs into vendor/ are not validated, but PHPStan needs them, so run composer install first.",
 	Args:  cobra.MaximumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := projectValidationFormat(cmd); err != nil {
 			return err
 		}
-		return verifier.SetupTools(cmd.Context(), cmd.Root().Version)
-	},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		reportingFormat, err := projectValidationFormat(cmd)
-		if err != nil {
-			return err
-		}
 		only, _ := cmd.Flags().GetString("only")
 		exclude, _ := cmd.Flags().GetString("exclude")
 		verifier.WarnOnDeprecatedToolName(cmd.Context(), only, exclude)
-		noCopy, _ := cmd.Flags().GetBool("no-copy")
+		_, _, err := selectProjectValidationTools(only, exclude)
+		return err
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Reporting format was validated in PreRunE.
+		reportingFormat, _ := projectValidationFormat(cmd)
+		ctx := cmd.Context()
+		progress := verifier.NewProgress(reportingFormat)
+		only, _ := cmd.Flags().GetString("only")
+		exclude, _ := cmd.Flags().GetString("exclude")
+
+		// Tool selection was validated in PreRunE.
+		tools, statuses, _ := selectProjectValidationTools(only, exclude)
 		localOnly, _ := cmd.Flags().GetBool("local-only")
 
+		var err error
 		projectPath := ""
 
 		if len(args) > 0 {
@@ -53,59 +55,25 @@ var projectValidateCmd = &cobra.Command{
 			return fmt.Errorf("cannot find path: %w", err)
 		}
 
-		validationPath := projectPath
-		if !noCopy {
-			tmpDir, err := os.MkdirTemp(os.TempDir(), "analyse-project-*")
-			if err != nil {
-				return fmt.Errorf("cannot create temporary directory: %w", err)
-			}
-			defer func() {
-				if err := os.RemoveAll(tmpDir); err != nil {
-					logging.FromContext(cmd.Context()).Errorf("Failed to remove temporary directory: %v", err)
-				}
-			}()
-
-			if err := system.CopyFiles(cmd.Context(), projectPath, tmpDir); err != nil {
-				return err
-			}
-			validationPath = tmpDir
-		}
-
-		toolCfg, err := verifier.GetConfigFromProject(cmd.Context(), validationPath, localOnly)
+		finishConfig := progress.Start("discovering project configuration")
+		toolCfg, err := verifier.GetConfigFromProject(ctx, projectPath, localOnly)
+		finishConfig(err)
 		if err != nil {
 			return err
 		}
 
-		result := verifier.NewCheck()
-		result.SetSourceRoot(toolCfg.RootDir)
-
-		var gr errgroup.Group
-
-		tools := verifier.GetToolsOf[verifier.CheckTool]()
-
-		tools, err = tools.Only(only)
-		if err != nil {
-			return err
+		finishSetup := progress.Start("preparing tools")
+		setupErr := verifier.SetupTools(ctx, cmd.Root().Version)
+		finishSetup(setupErr)
+		if setupErr != nil {
+			return setupErr
 		}
+		toolCfg.ToolDirectory = verifier.GetToolDirectory()
 
-		tools, err = tools.Exclude(exclude)
-		if err != nil {
-			return err
-		}
-
-		for _, tool := range tools {
-			gr.Go(func() error {
-				return tool.Check(cmd.Context(), result, *toolCfg)
-			})
-		}
-
-		if err := gr.Wait(); err != nil {
-			return err
-		}
-
-		filtered := result.RemoveByIdentifier(toolCfg.ValidationIgnores)
-
-		return validation.DoCheckReport(filtered, reportingFormat, false)
+		results := verifier.RunTools(ctx, tools, statuses, *toolCfg, progress, func(tool verifier.CheckTool, execution *verifier.ToolExecution) verifier.ToolSummary {
+			return tool.Check(ctx, *toolCfg, execution)
+		})
+		return validation.ReportTools(results, reportingFormat, "Checkers")
 	},
 }
 
@@ -126,11 +94,15 @@ func init() {
 	projectRootCmd.AddCommand(projectValidateCmd)
 	projectValidateCmd.PersistentFlags().String("format", "", "Report format (summary, json, github, gitlab, junit, markdown; auto-detected if unset)")
 	projectValidateCmd.PersistentFlags().String("reporter", "", "Reporting format (summary, json, github, gitlab, junit, markdown)")
-	projectValidateCmd.PersistentFlags().String("only", "", "Run only the specified tools (comma-separated). Available: phpstan, eslint, stylelint, storefront-twig, builtin (legacy alias: sw-cli, deprecated)")
-	projectValidateCmd.PersistentFlags().String("exclude", "", "Skip these tools (comma-separated); with --only, each must be selected there. Names: phpstan, eslint, stylelint, storefront-twig, builtin (legacy alias: sw-cli, deprecated)")
+	projectValidateCmd.PersistentFlags().String("only", "", "Run only these validation checks (comma-separated, e.g. phpstan,eslint)")
+	projectValidateCmd.PersistentFlags().String("exclude", "", "Exclude specified validation checks from running (comma-separated, e.g. phpstan,eslint). When combined with --only, exclude validation checks from the selected set")
 	projectValidateCmd.PersistentFlags().Bool("no-copy", false, "Validate the project directory itself, not a temporary copy")
 	projectValidateCmd.PersistentFlags().Bool("local-only", false, "Validate only extensions in custom/* folders")
+	_ = projectValidateCmd.RegisterFlagCompletionFunc("format", cobra.FixedCompletions(validation.ReporterFormats, cobra.ShellCompDirectiveNoFileComp))
+	_ = projectValidateCmd.RegisterFlagCompletionFunc("only", completeToolNames[verifier.CheckTool])
+	_ = projectValidateCmd.RegisterFlagCompletionFunc("exclude", completeToolNames[verifier.CheckTool])
 	projectValidateCmd.MarkFlagsMutuallyExclusive("format", "reporter")
 	_ = projectValidateCmd.PersistentFlags().MarkDeprecated("reporter", "use --format instead")
+	_ = projectValidateCmd.PersistentFlags().MarkDeprecated("no-copy", "validation always runs in place, omit --no-copy")
 	_ = projectValidateCmd.PersistentFlags().MarkHidden("reporter")
 }

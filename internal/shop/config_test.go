@@ -48,6 +48,48 @@ include:
 	assert.NotNil(t, config.ConfigDump.Where)
 }
 
+func TestConfigMergingDumpTableLists(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Chdir(tmpDir)
+
+	baseConfig := []byte(`
+dump:
+  nodata:
+    - promotion
+    - newsletter_recipient
+  skip_customer_data_tables:
+    - payone_payment_card
+    - 'unzer_payment_*'
+  ignore:
+    - product_search_keyword
+`)
+
+	projectConfig := []byte(`
+include:
+  - base.yml
+dump:
+  nodata:
+    - frosh_mail_archive
+    - promotion
+  skip_customer_data_tables:
+    - klarna_payment_request_log
+    - payone_payment_card
+  ignore:
+    - product_keyword_dictionary
+`)
+
+	assert.NoError(t, os.WriteFile(filepath.Join(tmpDir, "base.yml"), baseConfig, 0644))
+	assert.NoError(t, os.WriteFile(filepath.Join(tmpDir, "project.yml"), projectConfig, 0644))
+
+	config, err := ReadConfig(t.Context(), filepath.Join(tmpDir, "project.yml"), false)
+	assert.NoError(t, err)
+
+	assert.Equal(t, []string{"frosh_mail_archive", "promotion", "newsletter_recipient"}, config.ConfigDump.NoData)
+	assert.Equal(t, []string{"product_keyword_dictionary", "product_search_keyword"}, config.ConfigDump.Ignore)
+	assert.ElementsMatch(t, []string{"klarna_payment_request_log", "payone_payment_card", "unzer_payment_*"}, config.ConfigDump.SkipCustomerDataTables)
+}
+
 func TestConfigPHPVersionRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -938,7 +980,7 @@ func TestConfigDump_EnableClean(t *testing.T) {
 		config.EnableClean()
 
 		assert.NotNil(t, config.NoData)
-		assert.Len(t, config.NoData, 17)
+		assert.Len(t, config.NoData, 19)
 
 		// Verify all tables are present
 		expectedTables := []string{
@@ -959,6 +1001,8 @@ func TestConfigDump_EnableClean(t *testing.T) {
 			"version_commit",
 			"version_commit_data",
 			"webhook_event_log",
+			"webhook_delivery",
+			"webhook_stream",
 		}
 
 		for _, table := range expectedTables {
@@ -983,7 +1027,7 @@ func TestConfigDump_EnableClean(t *testing.T) {
 		assert.Contains(t, config.NoData, "version")
 
 		// Total should be custom tables + clean tables
-		assert.Len(t, config.NoData, 19)
+		assert.Len(t, config.NoData, 21)
 	})
 
 	t.Run("no duplicates when pre-existing entry overlaps with defaults", func(t *testing.T) {
@@ -1010,8 +1054,8 @@ func TestConfigDump_EnableClean(t *testing.T) {
 		}
 		assert.Equal(t, 1, count, "version should appear exactly once")
 
-		// Total should be custom tables (3) + remaining clean tables (15)
-		assert.Len(t, config.NoData, 18)
+		// Total should be custom tables (3) + remaining clean tables (17)
+		assert.Len(t, config.NoData, 20)
 
 		// Pre-existing tables should be preserved in their original positions
 		assert.Equal(t, "my_custom_table", config.NoData[0])
@@ -1041,6 +1085,8 @@ func TestConfigDump_EnableClean(t *testing.T) {
 		assert.Contains(t, config.NoData, "version_commit")
 		assert.Contains(t, config.NoData, "version_commit_data")
 		assert.Contains(t, config.NoData, "webhook_event_log")
+		assert.Contains(t, config.NoData, "webhook_delivery")
+		assert.Contains(t, config.NoData, "webhook_stream")
 	})
 
 	t.Run("multiple calls are idempotent", func(t *testing.T) {
@@ -1076,7 +1122,7 @@ func TestConfigDump_EnableClean(t *testing.T) {
 		assert.Equal(t, "id > 100", config.Where["customer"])
 
 		// NoData should be populated
-		assert.Len(t, config.NoData, 17)
+		assert.Len(t, config.NoData, 19)
 	})
 
 	t.Run("preserves order of existing tables", func(t *testing.T) {
@@ -1175,4 +1221,31 @@ func TestWriteConfigHonoursStorageLocation(t *testing.T) {
 
 	assert.FileExists(t, filepath.Join(tmpDir, ".shopwell-project.yml"))
 	assert.NoFileExists(t, filepath.Join(tmpDir, ".config/shopwell-project.yml"))
+}
+
+func TestReadConfigSSHEnvironmentPHPArgs(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".shopwell-project.yml")
+	content := []byte(`
+compatibility_date: "2026-01-01"
+environments:
+  remote:
+    type: ssh
+    ssh:
+      host: shop.example.com
+      directory: /var/www/shop
+      php_binary: /usr/bin/php8.3
+      php_args:
+        - -d
+        - memory_limit=512M
+        - -c
+        - /etc/php/custom.ini
+`)
+	assert.NoError(t, os.WriteFile(configPath, content, 0o644))
+
+	cfg, err := ReadConfig(t.Context(), configPath, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Environments["remote"].SSH)
+	assert.Equal(t, "/usr/bin/php8.3", cfg.Environments["remote"].SSH.PHPBinary)
+	assert.Equal(t, []string{"-d", "memory_limit=512M", "-c", "/etc/php/custom.ini"}, cfg.Environments["remote"].SSH.PHPArgs)
 }

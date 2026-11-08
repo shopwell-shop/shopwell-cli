@@ -33,18 +33,29 @@ type EnvironmentConfig struct {
 }
 
 type EnvironmentSSHConfig struct {
-	// SSH host name or IP address
-	Host string `yaml:"host" jsonschema:"required"`
+	// SSH host name or IP address for a single target. Mutually exclusive with hosts.
+	Host string `yaml:"host,omitempty"`
 	// SSH user. Defaults to the user configured in ~/.ssh/config or the current user
 	User string `yaml:"user,omitempty"`
 	// SSH port. Defaults to 22
 	Port int `yaml:"port,omitempty"`
-	// Absolute path of the Shopwell project root on the remote host
-	Directory string `yaml:"directory" jsonschema:"required"`
+	// Absolute path of the Shopwell project root on the remote host. For deployments, this is the active release symlink (any name); its parent holds deployment storage and must be dedicated to this deployment. Required on the single target or inherited/overridden by each named host.
+	Directory string `yaml:"directory,omitempty"`
 	// Path to the SSH private key file. Defaults to the ssh agent or the default key files
 	IdentityFile string `yaml:"identity_file,omitempty"`
 	// PHP binary used for PHP and console commands on the remote host (e.g. "/usr/bin/php8.3"). Defaults to "php"
 	PHPBinary string `yaml:"php_binary,omitempty"`
+	// Additional arguments passed to the PHP binary for PHP and console commands on the remote host (e.g. ["-d", "memory_limit=512M"] or ["-c", "/path/to/php.ini"]). Appended after the binary.
+	PHPArgs []string `yaml:"php_args,omitempty"`
+	// Persistent files and directories linked into SSH deployment releases.
+	Cachetool *EnvironmentSSHCachetoolConfig `yaml:"cachetool,omitempty"`
+	Shared    *EnvironmentSSHSharedConfig    `yaml:"shared,omitempty"`
+	// Named SSH targets, mutually exclusive with host. Persistent shared directories must be shared across hosts; releases, the active symlink and .shopwell-cli remain host-local.
+	Hosts map[string]*EnvironmentSSHHostConfig `yaml:"hosts,omitempty"`
+	// Named host running migrations and initialization. Required with multiple hosts; defaults to the only host otherwise.
+	MigrationHost string `yaml:"migration_host,omitempty"`
+	// Maximum concurrent host operations. Zero uses the default of 2; the maximum is 32.
+	Parallelism int `yaml:"parallelism,omitempty" jsonschema:"minimum=0,maximum=32"`
 }
 
 type Config struct {
@@ -372,6 +383,10 @@ type ConfigAdminApi struct {
 }
 
 type ConfigDump struct {
+	// Exclude customer, order, newsletter, review, document, and related history data while keeping table schemas; includes clean mode
+	SkipCustomerData bool `yaml:"skip_customer_data,omitempty"`
+	// Additional tables to export with schema only when skipping customer data, supports glob wildcards (e.g. "payone_payment_*")
+	SkipCustomerDataTables []string `yaml:"skip_customer_data_tables,omitempty"`
 	// Allows to rewrite single columns, perfect for GDPR compliance
 	Rewrite map[string]map[string]string `yaml:"rewrite,omitempty"`
 	// Only export the schema of these tables, supports glob wildcards (e.g. "customer*")
@@ -404,6 +419,8 @@ func (c *ConfigDump) EnableClean() {
 		"version_commit",
 		"version_commit_data",
 		"webhook_event_log",
+		"webhook_delivery",
+		"webhook_stream",
 	}
 	for _, table := range cleanTables {
 		if !slices.Contains(c.NoData, table) {
@@ -502,6 +519,9 @@ func (c *ConfigDump) NormalizeFakerExpressions() {
 }
 
 type ConfigDeployment struct {
+	// Skip asset installation during deployment when assets were built in CI/CD. This can also be enabled with SHOPWELL_DEPLOYMENT_SKIP_ASSETS_INSTALL=1.
+	SkipAssetsInstall *bool `yaml:"skip-assets-install,omitempty"`
+
 	Hooks struct {
 		// The pre hook will be executed before the deployment
 		Pre ConfigDeploymentHook `yaml:"pre"`
@@ -704,8 +724,9 @@ type ConfigValidation struct {
 
 	IgnoreExtensions []ConfigValidationIgnoreExtension `yaml:"ignore_extensions,omitempty"`
 
-	// PhpVersion overrides the PHP version used for linting (e.g. "8.4").
-	// When set, this takes precedence over the version derived from composer.json or the static Shopwell-to-PHP mapping.
+	// PhpVersion sets the default PHP lint target for project extensions (e.g. "8.4").
+	// Falls back to the project's php_version, then the minimum PHP version for each extension's Shopwell constraint.
+	// An extension's validation.php_version takes precedence.
 	PhpVersion string `yaml:"php_version,omitempty"`
 }
 
@@ -869,6 +890,21 @@ func WriteConfig(cfg *Config, dir string) error {
 }
 
 func ReadConfig(ctx context.Context, fileName string, allowFallback bool) (*Config, error) {
+	config, err := readConfig(ctx, fileName, allowFallback)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.validateSSHCachetool(); err != nil {
+		return nil, fmt.Errorf("cannot read project config %s: %w", fileName, err)
+	}
+	if err := config.validateSSHHosts(); err != nil {
+		return nil, fmt.Errorf("cannot read project config %s: %w", fileName, err)
+	}
+	return config, nil
+}
+
+// readConfig merges partial includes and local overrides before SSH validation.
+func readConfig(ctx context.Context, fileName string, allowFallback bool) (*Config, error) {
 	config := &Config{foundConfig: false}
 
 	_, err := os.Stat(fileName)
@@ -922,7 +958,7 @@ func ReadConfig(ctx context.Context, fileName string, allowFallback bool) (*Conf
 
 	if len(config.AdditionalConfigs) > 0 {
 		for _, additionalConfigFile := range config.AdditionalConfigs {
-			additionalConfig, err := ReadConfig(ctx, additionalConfigFile, allowFallback)
+			additionalConfig, err := readConfig(ctx, additionalConfigFile, allowFallback)
 			if err != nil {
 				return nil, fmt.Errorf("cannot read included config %s: %w", additionalConfigFile, err)
 			}
@@ -931,6 +967,14 @@ func ReadConfig(ctx context.Context, fileName string, allowFallback bool) (*Conf
 			if err != nil {
 				return nil, fmt.Errorf("cannot merge included config %s: %w", additionalConfigFile, err)
 			}
+
+			// Table lists add up, the project's own list must not drop the included tables.
+			if config.ConfigDump != nil && additionalConfig.ConfigDump != nil {
+				config.ConfigDump.NoData = appendMissing(config.ConfigDump.NoData, additionalConfig.ConfigDump.NoData)
+				config.ConfigDump.Ignore = appendMissing(config.ConfigDump.Ignore, additionalConfig.ConfigDump.Ignore)
+				config.ConfigDump.SkipCustomerDataTables = appendMissing(config.ConfigDump.SkipCustomerDataTables, additionalConfig.ConfigDump.SkipCustomerDataTables)
+			}
+			config.applyIncludedCachetoolEnabled(additionalConfig)
 		}
 	}
 
@@ -943,6 +987,17 @@ func ReadConfig(ctx context.Context, fileName string, allowFallback bool) (*Conf
 	}
 
 	return fillEmptyConfig(config), nil
+}
+
+// appendMissing appends the items of add that list does not contain yet.
+func appendMissing(list []string, add []string) []string {
+	for _, item := range add {
+		if !slices.Contains(list, item) {
+			list = append(list, item)
+		}
+	}
+
+	return list
 }
 
 // applyLocalOverride decodes the project configuration with its local override

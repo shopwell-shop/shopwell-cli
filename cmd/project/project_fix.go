@@ -2,27 +2,45 @@ package project
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/shopwell-shop/shopwell-cli/internal/shop"
+	"github.com/shopwell-shop/shopwell-cli/internal/validation"
 	"github.com/shopwell-shop/shopwell-cli/internal/verifier"
 )
 
 var projectFixCmd = &cobra.Command{
 	Use:   "fix [path]",
 	Short: "Apply code-quality fixes to a project",
-	Long:  "Run code-quality fixers on the project's own code, such as extensions in custom/ and configured bundles, and change the files directly. Packages that Composer installs into vendor/ are not changed. Requires a Git repository so the changes can be reviewed, unless --allow-non-git is passed.",
+	Long:  "Run code-quality fixers on the project's own code, such as extensions in custom/ and configured bundles, and change the files directly. Packages that Composer installs into vendor/ are not changed. Use --dry-run to report findings and proposed changes without applying fixes.",
 	Args:  cobra.MaximumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		return verifier.SetupTools(cmd.Context(), cmd.Root().Version)
+		only, _ := cmd.Flags().GetString("only")
+		exclude, _ := cmd.Flags().GetString("exclude")
+		verifier.WarnOnDeprecatedToolName(cmd.Context(), only, exclude)
+		_, _, err := selectProjectFixTools(only, exclude)
+		return err
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var err error
+		ctx := cmd.Context()
+		progress := verifier.NewProgress("")
 
+		only, _ := cmd.Flags().GetString("only")
+		exclude, _ := cmd.Flags().GetString("exclude")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+		// Tool selection was validated in PreRunE.
+		tools, statuses, _ := selectProjectFixTools(only, exclude)
+		finishSetup := progress.Start("preparing tools")
+		setupErr := verifier.SetupTools(ctx, cmd.Root().Version)
+		finishSetup(setupErr)
+		if setupErr != nil {
+			return setupErr
+		}
+
+		var err error
 		projectPath := ""
 
 		if len(args) > 0 {
@@ -39,41 +57,30 @@ var projectFixCmd = &cobra.Command{
 			return fmt.Errorf("cannot find path: %w", err)
 		}
 
-		allowNonGit, _ := cmd.Flags().GetBool("allow-non-git")
-		if !allowNonGit {
-			if stat, err := os.Stat(filepath.Join(projectPath, ".git")); err != nil || !stat.IsDir() {
-				return fmt.Errorf("%s is not a git repository. Use --allow-non-git flag to run anyway", projectPath)
-			}
-		}
-
-		only, _ := cmd.Flags().GetString("only")
-
-		toolCfg, err := verifier.GetConfigFromProject(cmd.Context(), projectPath, false)
+		finishConfig := progress.Start("discovering project configuration")
+		toolCfg, err := verifier.GetConfigFromProject(ctx, projectPath, false)
+		finishConfig(err)
 		if err != nil {
 			return err
 		}
 
-		var gr errgroup.Group
-
-		tools := verifier.GetToolsOf[verifier.FixTool]()
-
-		tools, err = tools.Only(only)
-		if err != nil {
-			return err
-		}
-
-		for _, tool := range tools {
-			gr.Go(func() error {
-				return tool.Fix(cmd.Context(), *toolCfg)
-			})
-		}
-
-		return gr.Wait()
+		results := verifier.RunTools(
+			ctx, tools, statuses, *toolCfg, progress,
+			func(tool verifier.FixTool, execution *verifier.ToolExecution) verifier.ToolSummary {
+				return tool.Fix(ctx, *toolCfg, execution, dryRun)
+			},
+		)
+		return validation.ReportTools(results, "summary", "Fixers")
 	},
 }
 
 func init() {
 	projectRootCmd.AddCommand(projectFixCmd)
+	projectFixCmd.PersistentFlags().Bool("dry-run", false, "Report files that would change, without changing them")
 	projectFixCmd.PersistentFlags().String("only", "", "Run only the specified fixers (comma-separated, e.g. eslint,rector)")
+	projectFixCmd.PersistentFlags().String("exclude", "", "Exclude specified fixers from running (comma-separated, e.g. eslint,rector). When combined with --only, exclude fixers from the selected set")
 	projectFixCmd.PersistentFlags().Bool("allow-non-git", false, "Allow fix to run outside a Git repository")
+	_ = projectFixCmd.PersistentFlags().MarkDeprecated("allow-non-git", "a Git repository is no longer required; omit --allow-non-git")
+	_ = projectFixCmd.RegisterFlagCompletionFunc("only", completeToolNames[verifier.FixTool])
+	_ = projectFixCmd.RegisterFlagCompletionFunc("exclude", completeToolNames[verifier.FixTool])
 }

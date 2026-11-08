@@ -7,29 +7,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/shopwell-shop/shopwell-cli/internal/validation"
 	"github.com/shopwell-shop/shopwell-cli/internal/verifier"
 )
-
-func toolStatusByName(t *testing.T, statuses []validation.ToolInvocationStatus, name string) validation.ToolInvocationStatus {
-	t.Helper()
-	for _, status := range statuses {
-		if status.Name == name {
-			return status
-		}
-	}
-	t.Fatalf("missing tool status for %s", name)
-	return validation.ToolInvocationStatus{}
-}
 
 func TestExtensionValidationSelection(t *testing.T) {
 	t.Run("default runs all checkers", func(t *testing.T) {
 		tools, statuses, err := selectExtensionValidationTools("", "")
 		require.NoError(t, err)
 		assert.Len(t, tools, 5)
-		assert.Len(t, statuses, len(tools))
+		assert.Empty(t, statuses)
 		assert.True(t, slices.ContainsFunc(tools, requiresToolSetup))
-		assert.Equal(t, "invoked", toolStatusByName(t, statuses, "phpstan").Status)
 	})
 
 	t.Run("only phpstan", func(t *testing.T) {
@@ -37,8 +24,7 @@ func TestExtensionValidationSelection(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []string{"phpstan"}, toolNamesForValidation(tools))
 		assert.True(t, slices.ContainsFunc(tools, requiresToolSetup))
-		assert.Equal(t, "invoked", toolStatusByName(t, statuses, "phpstan").Status)
-		assert.Equal(t, "not selected by --only", toolStatusByName(t, statuses, "builtin").Reason)
+		assert.Contains(t, statuses, verifier.ToolResult{Name: "builtin", SkipReason: "not selected by --only"})
 	})
 
 	t.Run("Twig validation needs no external tools", func(t *testing.T) {
@@ -52,14 +38,14 @@ func TestExtensionValidationSelection(t *testing.T) {
 		tools, statuses, err := selectExtensionValidationTools("", "phpstan")
 		require.NoError(t, err)
 		assert.NotContains(t, toolNamesForValidation(tools), "phpstan")
-		assert.Equal(t, "excluded by --exclude", toolStatusByName(t, statuses, "phpstan").Reason)
+		assert.Contains(t, statuses, verifier.ToolResult{Name: "phpstan", SkipReason: "excluded by --exclude"})
 	})
 
 	t.Run("exclude applies after only", func(t *testing.T) {
 		tools, statuses, err := selectExtensionValidationTools("phpstan,sw-cli", "sw-cli")
 		require.NoError(t, err)
 		assert.Equal(t, []string{"phpstan"}, toolNamesForValidation(tools))
-		assert.Equal(t, "excluded by --exclude", toolStatusByName(t, statuses, "builtin").Reason)
+		assert.Contains(t, statuses, verifier.ToolResult{Name: "builtin", SkipReason: "excluded by --exclude"})
 	})
 
 	t.Run("duplicate only values run once", func(t *testing.T) {
@@ -93,6 +79,11 @@ func TestExtensionValidateFullFlagDeprecated(t *testing.T) {
 	flag := extensionValidateCmd.PersistentFlags().Lookup("full")
 	require.NotNil(t, flag)
 	assert.NotEmpty(t, flag.Deprecated)
+}
+
+func TestExtensionFixAndFormatHaveExcludeFlag(t *testing.T) {
+	assert.NotNil(t, extensionFixCmd.Flags().Lookup("exclude"))
+	assert.NotNil(t, extensionFormat.Flags().Lookup("exclude"))
 }
 
 func toolNamesForValidation(tools verifier.ToolList[verifier.CheckTool]) []string {

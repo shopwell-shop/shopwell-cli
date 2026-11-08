@@ -12,6 +12,7 @@ import (
 	"github.com/shopwell-shop/shopwell-cli/internal/flexmigrator"
 	"github.com/shopwell-shop/shopwell-cli/internal/shop"
 	"github.com/shopwell-shop/shopwell-cli/internal/system"
+	"github.com/shopwell-shop/shopwell-cli/internal/tracking"
 	"github.com/shopwell-shop/shopwell-cli/internal/tui"
 )
 
@@ -38,7 +39,7 @@ var projectAutofixFlexCmd = &cobra.Command{
 		}
 
 		if !confirmed {
-			return errors.New("autofix cancelled")
+			return tracking.NewCancelled("autofix cancelled")
 		}
 
 		if _, err := os.Stat(path.Join(project, "symfony.lock")); err == nil {

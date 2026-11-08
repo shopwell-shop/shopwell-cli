@@ -5,8 +5,13 @@ on:
     tags:
       - 'v*'
 
+concurrency:
+  group: ${{ github.workflow }}-caller
+  cancel-in-progress: false
+  queue: max
+
 permissions:
-  contents: write
+  contents: read
 
 env:
   GOTOOLCHAIN: local
@@ -14,23 +19,45 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2.22.3
+        with:
+          egress-policy: audit
+
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        # Keep publishing cache performance; changes to cache policy are deferred.
+        # jactionlint ignore=cache-poisoning
+        uses: actions/setup-go@v7.0.0
         with:
           go-version: '1.27'
           cache: true
+          check-latest: true
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94
+        uses: goreleaser/goreleaser-action@v7.3.0
         with:
           distribution: goreleaser
           version: '~> v2'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-version-feed:
+    name: Publish version feed
+    needs: release
+    # Releases made with GITHUB_TOKEN never trigger workflows, so call it here
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/schema-pages.yml

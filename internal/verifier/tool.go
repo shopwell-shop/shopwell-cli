@@ -2,7 +2,9 @@ package verifier
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"slices"
 	"strings"
 
@@ -34,6 +36,11 @@ func GetToolsOf[T Tool]() ToolList[T] {
 	return tools
 }
 
+const (
+	CheckAgainstHighest = "highest"
+	CheckAgainstLowest  = "lowest"
+)
+
 type ToolConfig struct {
 	// Path to the tool directory
 	ToolDirectory string
@@ -56,27 +63,63 @@ type ToolConfig struct {
 	AdminDirectories []string
 	// Contains a list of directories that are considered as storefront code
 	StorefrontDirectories []string
+	// List of extensions of the project or a single extension
+	Extensions []extension.Extension
+	// PHP version of the project the extensions are validated in; empty for a single extension
+	PHPVersion string
+	// Whether RootDir is a Shopwell project rather than a single extension
+	IsProject bool
+}
 
-	Extension extension.Extension
+func (c *ToolConfig) logConfiguration(ctx context.Context) {
+	logger := logging.FromContext(ctx)
+	logger.Debugf("Tool root directory: %s", c.RootDir)
+	for _, dir := range c.SourceDirectories {
+		logger.Debugf("Tool source directory: %s", dir)
+	}
+	for _, dir := range c.AdminDirectories {
+		logger.Debugf("Tool administration directory: %s", dir)
+	}
+	for _, dir := range c.StorefrontDirectories {
+		logger.Debugf("Tool storefront directory: %s", dir)
+	}
+	for _, ext := range c.Extensions {
+		name, err := ext.GetName()
+		if err != nil {
+			logger.Debugf("Cannot read tool extension name for %s: %v", ext.GetPath(), err)
+			continue
+		}
+		logger.Debugf("Tool extension: %s", name)
+	}
 }
 
 type Tool interface {
 	Name() string
 }
 
+// ToolSummary contains optional metadata returned by a tool. RunTools builds the
+// final ToolResult from this metadata and ToolExecution after deferred cleanup.
+type ToolSummary struct {
+	Note       string
+	SkipReason string
+}
+
 type CheckTool interface {
 	Tool
-	Check(ctx context.Context, check *Check, config ToolConfig) error
+	// Check returns note or skip metadata; RunTools finalizes findings and errors
+	// from the execution helper after the tool and its deferred cleanup return.
+	Check(ctx context.Context, config ToolConfig, execution *ToolExecution) ToolSummary
 }
 
 type FixTool interface {
 	Tool
-	Fix(ctx context.Context, config ToolConfig) error
+	// Fix reports pending changes without applying them when dryRun is true.
+	Fix(ctx context.Context, config ToolConfig, execution *ToolExecution, dryRun bool) ToolSummary
 }
 
 type FormatTool interface {
 	Tool
-	Format(ctx context.Context, config ToolConfig, dryRun bool) error
+	Format(ctx context.Context, config ToolConfig, execution *ToolExecution, dryRun bool) ToolSummary
 }
 
 func canonicalToolName(name string) string {
@@ -160,6 +203,44 @@ func (tl ToolList[T]) Exclude(exclude string) (ToolList[T], error) {
 	return filtered, nil
 }
 
+// SelectTools applies the --only and --exclude filters and returns the
+// selected tools and results for skipped tools. kind names the tools in the
+// error returned when no tools remain, such as "formatters".
+func SelectTools[T Tool](all ToolList[T], only, exclude, kind string) (
+	ToolList[T],
+	[]ToolResult,
+	error,
+) {
+	requested, err := all.Only(only)
+	if err != nil {
+		return nil, nil, err
+	}
+	selected, err := requested.Exclude(exclude)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(selected) == 0 {
+		return nil, nil, fmt.Errorf("no %s selected after applying --exclude", kind)
+	}
+
+	return selected, skippedTools(all, requested, selected), nil
+}
+
+func skippedTools[T Tool](all, requested, selected ToolList[T]) []ToolResult {
+	results := make([]ToolResult, 0, len(all))
+	for _, tool := range all {
+		result := ToolResult{Name: tool.Name(), SkipReason: "not selected by --only"}
+		switch {
+		case slices.ContainsFunc(selected, func(candidate T) bool { return candidate.Name() == tool.Name() }):
+			continue
+		case slices.ContainsFunc(requested, func(candidate T) bool { return candidate.Name() == tool.Name() }):
+			result.SkipReason = "excluded by --exclude"
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
 func (tl ToolList[T]) PossibleString() string {
 	var possibleTools []string
 	for _, t := range tl {
@@ -167,4 +248,56 @@ func (tl ToolList[T]) PossibleString() string {
 	}
 
 	return strings.Join(possibleTools, ",")
+}
+
+// CompleteNames completes a comma-separated tool selection, skipping names already typed.
+func (tl ToolList[T]) CompleteNames(toComplete string) []string {
+	prefix := ""
+	if i := strings.LastIndex(toComplete, ","); i >= 0 {
+		prefix = toComplete[:i+1]
+	}
+
+	var chosen []string
+	for _, name := range strings.Split(prefix, ",") {
+		chosen = append(chosen, canonicalToolName(strings.TrimSpace(name)))
+	}
+
+	var completions []string
+	for _, t := range tl {
+		if !slices.Contains(chosen, t.Name()) {
+			completions = append(completions, prefix+t.Name())
+		}
+	}
+
+	return completions
+}
+
+// CommandContext logs the command before creating it with exec.CommandContext.
+func CommandContext(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	logging.FromContext(ctx).Debugf("Executing command: %s %s", name, strings.Join(arg, " "))
+	return exec.CommandContext(ctx, name, arg...)
+}
+
+func expectedExit(err error, codes ...int) bool {
+	if err == nil {
+		return true
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && slices.Contains(codes, exitErr.ExitCode())
+}
+
+// commandOutputOrError prefers stderr, then stdout, and falls back to the process error.
+// Captured output is trimmed before it is returned.
+func commandOutputOrError(stderr string, stdout []byte, err error) string {
+	if output := strings.TrimSpace(stderr); output != "" {
+		return output
+	}
+	if output := strings.TrimSpace(string(stdout)); output != "" {
+		return output
+	}
+	if err != nil {
+		return err.Error()
+	}
+
+	return ""
 }

@@ -13,12 +13,12 @@ manually.
    ```sh
    git tag -s 1.2.3 -m "1.2.3"
    ```
-   
+
    Use a prerelease suffix such as `1.2.3-rc.1` for prereleases.
 
-   The `-s` flag makes the tag "signed", similar to commits it is considered best practice.
-   For it to work you might need to refer to [GitHub's documentation on the matter](https://docs.github.com/en/authentication/managing-commit-signature-verification/associating-an-email-with-your-gpg-key).
-
+   The `-s` flag makes the tag "signed", similar to commits it is considered
+   best practice. For it to work you might need to refer to
+   [GitHub's documentation on the matter](https://docs.github.com/en/authentication/managing-commit-signature-verification/associating-an-email-with-your-gpg-key).
 3. Push only the new tag:
 
    ```sh
@@ -29,6 +29,27 @@ The tag push triggers the `Release` workflow. It runs GoReleaser, which creates
 the GitHub release and uploads the CLI archives and checksum file. Watch the
 workflow to completion and verify the resulting GitHub release, including the
 `shopwell-cli_Linux_x86_64.tar.gz` asset.
+
+## Version feed
+
+The CLI's update hint reads
+`https://shopwell-shop.github.io/shopwell-cli/version.json`. The release
+workflow publishes that file by calling the `Publish Config Schemas` workflow
+once the GitHub release exists, so the feed and the config schemas of the tag go
+live together.
+
+That call runs on the tag, so the `github-pages` environment must allow
+deployments from release tags. The rule is a repository setting, not part of any
+workflow file: Settings, Environments, `github-pages`, deployment branches and
+tags, tag pattern `v*`. As an admin, the same rule can be added with:
+
+```sh
+gh api -X POST repos/shopwell-shop/shopwell-cli/environments/github-pages/deployment-branch-policies -f name='v*' -f type=tag
+```
+
+If the `Publish version feed` job fails with an environment protection error,
+the rule is missing. Add it and re-run the job; the release itself is
+unaffected.
 
 ## If a release fails
 

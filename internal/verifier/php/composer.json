@@ -6,7 +6,7 @@
         "phpstan/extension-installer": "*",
         "phpstan/phpstan-symfony": "*",
         "rector/rector": "^2.0",
-        "shopwell/shopwell-rector": "^0.5.17",
+        "shopwell/shopwell-rector": "0.*",
         "phpstan/phpstan-deprecation-rules": "^2.0",
         "spaze/phpstan-disallowed-calls": "^4.0"
     },

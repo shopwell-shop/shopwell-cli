@@ -24,13 +24,16 @@ func New(projectRoot string, cfg *shop.EnvironmentConfig, shopCfg *shop.Config) 
 		if cfg.SSH == nil {
 			return nil, errors.New("ssh environment requires an ssh section with host and directory")
 		}
+		if len(cfg.SSH.Hosts) != 0 {
+			return nil, errors.New("cannot execute SSH command: ssh.hosts is only supported for deployments; use a single-host environment with ssh.host")
+		}
 		if cfg.SSH.Host == "" {
 			return nil, errors.New("ssh environment requires ssh.host")
 		}
 		if cfg.SSH.Directory == "" {
 			return nil, errors.New("ssh environment requires ssh.directory")
 		}
-		return &SSHExecutor{host: cfg.SSH.Host, user: cfg.SSH.User, port: cfg.SSH.Port, directory: cfg.SSH.Directory, identityFile: cfg.SSH.IdentityFile, phpBinary: cfg.SSH.PHPBinary, projectRoot: projectRoot, shopCfg: shopCfg, envCfg: cfg}, nil
+		return &SSHExecutor{host: cfg.SSH.Host, user: cfg.SSH.User, port: cfg.SSH.Port, directory: cfg.SSH.Directory, identityFile: cfg.SSH.IdentityFile, phpBinary: cfg.SSH.PHPBinary, phpArgs: cfg.SSH.PHPArgs, projectRoot: projectRoot, shopCfg: shopCfg, envCfg: cfg}, nil
 	case TypeSymfonyCLI:
 		path := pathToSymfonyCLI()
 		if path == "" {

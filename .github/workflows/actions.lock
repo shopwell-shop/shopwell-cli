@@ -5,8 +5,8 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/actionlint.yml':
         - 'actions/checkout@v7.0.1'
-        - 'jdx/mise-action@v5.2.6'
-        - 'step-security/harden-runner@v2.22.3'
+        - 'jdx/mise-action@v5.2.7'
+        - 'step-security/harden-runner@v2.22.4'
     '.github/workflows/agent-skills.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/base-docker.yml':
@@ -16,47 +16,47 @@ workflows:
     '.github/workflows/env-bridge-docker.yml':
         - 'actions/checkout@v7.0.1'
         - 'docker/build-push-action@v7.4.0'
-        - 'docker/login-action@v4.7.0'
+        - 'docker/login-action@v4.8.0'
         - 'docker/metadata-action@v6.2.0'
         - 'docker/setup-buildx-action@v4.4.1'
     '.github/workflows/go_test.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'codecov/codecov-action@v7.1.1'
-        - 'step-security/harden-runner@v2.22.3'
+        - 'step-security/harden-runner@v2.22.4'
     '.github/workflows/lint.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'golangci/golangci-lint-action@v9.3.0'
-        - 'step-security/harden-runner@v2.22.3'
+        - 'step-security/harden-runner@v2.22.4'
     '.github/workflows/markdown.yml':
         - 'actions/checkout@v7.0.1'
-        - 'jdx/mise-action@v5.2.6'
-        - 'step-security/harden-runner@v2.22.3'
+        - 'jdx/mise-action@v5.2.7'
+        - 'step-security/harden-runner@v2.22.4'
     '.github/workflows/nightly-smoke.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'actions/setup-node@v7.1.0'
         - 'shivammathur/setup-php@2.40.0'
         - 'shopwell-shop/github-actions@main'
-        - 'step-security/harden-runner@v2.22.3'
+        - 'step-security/harden-runner@v2.22.4'
     '.github/workflows/release.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'goreleaser/goreleaser-action@v7.3.0'
-        - 'step-security/harden-runner@v2.22.3'
+        - 'step-security/harden-runner@v2.22.4'
     '.github/workflows/schema-pages.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/configure-pages@v6.0.0'
         - 'actions/deploy-pages@v5.0.1'
         - 'actions/upload-pages-artifact@v5.0.0'
-        - 'step-security/harden-runner@v2.22.3'
+        - 'step-security/harden-runner@v2.22.4'
     '.github/workflows/smoke-test.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-go@v7.0.0'
         - 'shivammathur/setup-php@2.40.0'
         - 'shopwell-shop/build-project-action@main'
-        - 'step-security/harden-runner@v2.22.3'
+        - 'step-security/harden-runner@v2.22.4'
 dependencies:
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
@@ -112,9 +112,9 @@ dependencies:
         commit: 'sha1-c3c9e263c25d99ce0380d002d59b67737d91b0dc'
         owner_id: 5429470
         repo_id: 241092383
-    'docker/login-action@v4.7.0':
-        ref: 'v4.7.0'
-        commit: 'sha1-81c6f93d4bc991e510b342a00b419b3bb4efc5c6'
+    'docker/login-action@v4.8.0':
+        ref: 'v4.8.0'
+        commit: 'sha1-8aa5831fb8d48d8f76594c7ddde61ae58019f550'
         owner_id: 5429470
         repo_id: 287743349
     'docker/metadata-action@v6.2.0':
@@ -137,9 +137,9 @@ dependencies:
         commit: 'sha1-a4f02ab5355a589de60d917a659ce617ed19b3de'
         owner_id: 24697112
         repo_id: 209873006
-    'jdx/mise-action@v5.2.6':
-        ref: 'v5.2.6'
-        commit: 'sha1-f5be966e4a917d54244728e6a5fdcd1d93a35e6c'
+    'jdx/mise-action@v5.2.7':
+        ref: 'v5.2.7'
+        commit: 'sha1-b44d12e7d0d8ee7461bb893e1b1993500433185b'
         owner_id: 216188
         repo_id: 738284564
     'shivammathur/setup-php@2.40.0':
@@ -157,8 +157,8 @@ dependencies:
         commit: 'sha1-6a3aa825a22ddabf3c40db59d740634d5c8d6806'
         owner_id: 329940059
         repo_id: 1401215153
-    'step-security/harden-runner@v2.22.3':
-        ref: 'v2.22.3'
-        commit: 'sha1-46b06cea07f9e64621fdf066ba77ac6915163d43'
+    'step-security/harden-runner@v2.22.4':
+        ref: 'v2.22.4'
+        commit: 'sha1-1d88384fd173af6ecb012dfd0264a306b711241a'
         owner_id: 88700172
         repo_id: 422287306
